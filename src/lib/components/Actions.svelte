@@ -38,6 +38,9 @@
       const currentHeight = parseFloat(foreignObj.getAttribute('height') || '0');
       if (currentHeight <= 0) return;
 
+      // Centered labels can extend beyond the measured viewport horizontally.
+      foreignObj.style.overflow = 'visible';
+
       const currentY = parseFloat(foreignObj.getAttribute('y') || '0');
       const newHeight = currentHeight * 1.5;
       const heightDiff = newHeight - currentHeight;
