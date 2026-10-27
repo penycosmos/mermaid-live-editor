@@ -33,12 +33,12 @@
   });
 
   const jsonModel = monaco.editor.createModel(
-    '',
+    validatedState.current.mermaid,
     'json',
     monaco.Uri.parse('internal://config.json')
   );
   const mermaidModel = monaco.editor.createModel(
-    '',
+    validatedState.current.code,
     'mermaid',
     monaco.Uri.parse('internal://mermaid.mmd')
   );
@@ -109,7 +109,7 @@
 
     // Update editor text if it's different
     const newText = editorMode === 'code' ? code : mermaid;
-    if (newText !== currentText) {
+    if (newText !== model.getValue()) {
       isUpdatingFromState = true;
       try {
         editor.setScrollTop(0);
@@ -121,11 +121,11 @@
           }
         ]);
         editor.pushUndoStop();
-        currentText = newText;
       } finally {
         isUpdatingFromState = false;
       }
     }
+    currentText = newText;
 
     // Display/clear errors
     monaco.editor.setModelMarkers(model, 'mermaid', errorMarkers);

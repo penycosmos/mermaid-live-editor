@@ -49,9 +49,10 @@ export const prepareExportSvg = async (
         const response = await fetch(url);
         if (!response.ok) throw new Error('无法读取本地图表资源');
         const blob = await response.blob();
+        const fragment = new URL(url, window.location.href).hash;
         return await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result));
+          reader.onload = () => resolve(String(reader.result) + fragment);
           reader.onerror = () => reject(new Error('无法内嵌本地图表资源'));
           reader.readAsDataURL(blob);
         });

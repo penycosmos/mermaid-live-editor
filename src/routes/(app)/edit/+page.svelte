@@ -15,6 +15,7 @@
   import { PanZoomState } from '$/util/panZoom';
   import {
     defaultState,
+    getCodeRevision,
     inputState,
     replaceInputState,
     updateCode,
@@ -25,7 +26,7 @@
   import { initHandler } from '$/util/util';
   import { notify } from '$/util/notify';
   import { mode, setMode } from 'mode-watcher';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import {
     Code2,
     LayoutTemplate,
@@ -41,9 +42,14 @@
 
   type Panel = 'code' | 'templates' | 'history';
   let panel = $state<Panel | null>(null);
+  let editorOpened = $state(false);
+  $effect(() => {
+    if (panel === 'code') editorOpened = true;
+  });
   let width = $state(1200);
   let isMobile = $derived(width < 768);
   let fileInput: HTMLInputElement;
+  let fileReadId = 0;
   let fileName = $state('未命名图表.mmd');
   const panZoomState = new PanZoomState();
   const panels = [
@@ -63,17 +69,21 @@
   const openFile = async () => {
     const file = fileInput.files?.[0];
     if (!file) return;
+    const readId = ++fileReadId;
+    const revision = getCodeRevision();
     try {
       if (!/\.mmd$/i.test(file.name)) throw new Error('请选择 .mmd 源码文件');
       const code = await file.text();
+      if (readId !== fileReadId || revision !== getCodeRevision()) return;
       backup();
       updateCode(code, { resetPanZoom: true, updateDiagram: true });
       fileName = file.name;
       panel = 'code';
     } catch (error) {
-      notify(error instanceof Error ? error.message : '读取文件失败，当前图表已保留');
+      if (readId === fileReadId && revision === getCodeRevision())
+        notify(error instanceof Error ? error.message : '读取文件失败，当前图表已保留');
     } finally {
-      fileInput.value = '';
+      if (readId === fileReadId) fileInput.value = '';
     }
   };
   const saveSource = () => {
@@ -89,6 +99,7 @@
 
   onMount(initHandler);
   onMount(() => startAutoSave());
+  onDestroy(() => fileReadId++);
 </script>
 
 <svelte:window bind:innerWidth={width} />
@@ -166,20 +177,30 @@
     <div class="relative min-w-0 flex-1">
       {#if isMobile}
         {@render canvas()}
-        {#if panel}
-          <aside id="workspace-panel" class="absolute inset-0 z-20 flex flex-col bg-card">
+        {#if panel || editorOpened}
+          <aside
+            id="workspace-panel"
+            class="absolute inset-0 z-20 flex flex-col bg-card"
+            style={panel ? undefined : 'display: none'}>
             {@render panelContent()}
           </aside>
         {/if}
       {:else}
         <Resizable.PaneGroup direction="horizontal" class="h-full">
-          {#if panel}
-            <Resizable.Pane defaultSize={30} minSize={22} maxSize={55} class="min-w-0 bg-card">
+          {#if panel || editorOpened}
+            <Resizable.Pane
+              defaultSize={30}
+              minSize={22}
+              maxSize={55}
+              class="min-w-0 bg-card"
+              style={panel ? undefined : 'display: none'}>
               <aside id="workspace-panel" class="flex h-full min-h-0 flex-col">
                 {@render panelContent()}
               </aside>
             </Resizable.Pane>
-            <Resizable.Handle class="w-px bg-border after:-inset-x-1" />
+            <Resizable.Handle
+              class="w-px bg-border after:-inset-x-1"
+              style={panel ? undefined : 'display: none'} />
           {/if}
           <Resizable.Pane minSize={35} class="min-w-0">{@render canvas()}</Resizable.Pane>
         </Resizable.PaneGroup>
@@ -213,8 +234,10 @@
       ><X size={16} /></Button>
   </div>
   <div class="min-h-0 flex-1">
-    {#if panel === 'code'}
-      <div class="flex h-full min-h-0 flex-col">
+    {#if editorOpened}
+      <div
+        class="flex h-full min-h-0 flex-col"
+        style={panel === 'code' ? undefined : 'display: none'}>
         <div
           role="tablist"
           aria-label="编辑内容"
@@ -233,7 +256,8 @@
         </div>
         <div class="min-h-0 flex-1 pt-3"><Editor {isMobile} /></div>
       </div>
-    {:else if panel === 'templates'}
+    {/if}
+    {#if panel === 'templates'}
       <Preset />
     {:else if panel === 'history'}
       <History />

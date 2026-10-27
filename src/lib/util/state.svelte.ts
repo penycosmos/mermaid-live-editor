@@ -31,6 +31,10 @@ const input = $state<State>(readJSON(CODE_STORE_KEY, { ...defaultState }));
 // module, where update() persists and re-validates every change.
 export const inputState: Readonly<State> = input;
 
+// Pending file reads must not overwrite a later edit or document replacement.
+let codeRevision = 0;
+export const getCodeRevision = (): number => codeRevision;
+
 const validatedStateOf = (state: State, serialized: string): ValidatedState => ({
   ...state,
   editorMode: state.editorMode ?? 'code',
@@ -172,6 +176,7 @@ export const loadState = (data: string): void => {
 
 let renderCount = 0;
 const applyPartial = (state: State, newState: Partial<State>): void => {
+  if (newState.code !== undefined) codeRevision++;
   renderCount++;
   Object.assign(state, newState, { renderCount });
 };
@@ -188,6 +193,7 @@ export const updateCode = (
   }: { updateDiagram?: boolean; resetPanZoom?: boolean } = {}
 ): void => {
   update((state) => {
+    codeRevision++;
     if (resetPanZoom) {
       state.pan = undefined;
       state.zoom = undefined;
@@ -270,6 +276,7 @@ export const clearDefaultThemeConfig = (): void => {
 // dropping keys the next state does not define.
 export const replaceInputState = (next: State): void => {
   update((state) => {
+    codeRevision++;
     for (const key of Object.keys(state)) {
       if (!(key in next)) {
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- full-replace semantics

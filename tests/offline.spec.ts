@@ -24,6 +24,7 @@ test('canvas-first workspace keeps all panels usable and local', async ({ page }
   const external = await auditNetwork(page);
   await page.goto('/edit?gist=https://outside.invalid/gist&code=https://outside.invalid/source');
   await expect(page.locator('#view svg')).toBeVisible();
+  const fullCanvasWidth = (await page.locator('#view').boundingBox())?.width;
   await expect(page.locator('.monaco-editor')).toHaveCount(0);
   await page.getByRole('button', { name: '代码编辑', exact: true }).click();
   await expect(page.locator('.monaco-editor')).toBeVisible();
@@ -47,6 +48,10 @@ test('canvas-first workspace keeps all panels usable and local', async ({ page }
   await page.getByRole('button', { name: '本地历史', exact: true }).click();
   await expect(page.getByRole('tab', { name: '时间线' })).toBeVisible();
   await page.getByRole('button', { name: '收起侧栏' }).click();
+  await expect(page.locator('.monaco-editor')).toBeHidden();
+  await expect
+    .poll(async () => (await page.locator('#view').boundingBox())?.width)
+    .toBe(fullCanvasWidth);
   await page.getByRole('button', { name: '本地链接与嵌入' }).click();
   await expect(page.getByTestId(TID.embedSnippet)).toHaveValue(new RegExp(`${appOrigin}/embed`));
   await page.keyboard.press('Escape');
@@ -195,5 +200,5 @@ test('fits narrow screens, supports dark mode and independently scrolling code',
   await expect(page.locator('.cm-editor')).toBeVisible();
   expect((await page.locator('.cm-editor').boundingBox())?.height).toBeGreaterThan(500);
   await page.getByRole('button', { name: '收起侧栏' }).click();
-  await expect(page.locator('.cm-editor')).toHaveCount(0);
+  await expect(page.locator('.cm-editor')).toBeHidden();
 });
