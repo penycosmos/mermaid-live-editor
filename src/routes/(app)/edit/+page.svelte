@@ -189,6 +189,7 @@
         <Resizable.PaneGroup direction="horizontal" class="h-full">
           {#if panel || editorOpened}
             <Resizable.Pane
+              order={0}
               defaultSize={30}
               minSize={22}
               maxSize={55}
@@ -199,10 +200,11 @@
               </aside>
             </Resizable.Pane>
             <Resizable.Handle
-              class="w-px bg-border after:-inset-x-1"
+              aria-label="调整侧栏宽度"
+              class="z-20 w-px bg-border after:w-3 hover:bg-accent"
               style={panel ? undefined : 'display: none'} />
           {/if}
-          <Resizable.Pane minSize={35} class="min-w-0">{@render canvas()}</Resizable.Pane>
+          <Resizable.Pane order={1} minSize={35} class="min-w-0">{@render canvas()}</Resizable.Pane>
         </Resizable.PaneGroup>
       {/if}
     </div>
