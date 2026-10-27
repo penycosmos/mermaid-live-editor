@@ -2,8 +2,8 @@
  * <mermaid-embed> — a tiny, dependency-free loader for the Mermaid embed widget.
  *
  * Usage:
- *   <script src="https://mermaid.live/embed.js" async></script>
- *   <mermaid-embed src="https://mermaid.live/embed#pako:...">
+ *   <script src="http://localhost:3000/embed.js" async></script>
+ *   <mermaid-embed src="http://localhost:3000/embed#pako:...">
  *     graph TD
  *       A --> B
  *   </mermaid-embed>

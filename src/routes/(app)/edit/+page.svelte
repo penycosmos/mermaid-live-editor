@@ -1,177 +1,258 @@
 <script lang="ts">
   import Actions from '$/components/Actions.svelte';
-  import Card from '$/components/Card/Card.svelte';
-  import DiagramDocButton from '$/components/DiagramDocumentationButton.svelte';
   import Editor from '$/components/Editor.svelte';
-  import EnhancedEditsButton from '$/components/EnhancedEditsButton.svelte';
   import History from '$/components/History/History.svelte';
-  import { startAutoSave } from '$/components/History/historyState.svelte';
-  import McWrapper from '$/components/McWrapper.svelte';
-  import MermaidChartIcon from '$/components/MermaidChartIcon.svelte';
-  import EditorChooserModal from '$/components/migration/EditorChooserModal.svelte';
-  import Navbar from '$/components/Navbar.svelte';
-  import PanZoomToolbar from '$/components/PanZoomToolbar.svelte';
+  import { addAutoEntry, startAutoSave } from '$/components/History/historyState.svelte';
   import Preset from '$/components/Preset.svelte';
   import Share from '$/components/Share.svelte';
+  import ThemeIcon from '$/components/ThemeIcon.svelte';
+  import View from '$/components/View.svelte';
+  import PanZoomToolbar from '$/components/PanZoomToolbar.svelte';
   import SyncRoughToolbar from '$/components/SyncRoughToolbar.svelte';
   import { Button } from '$/components/ui/button';
-  import { Separator } from '$/components/ui/separator';
   import * as Resizable from '$/components/ui/resizable';
-  import { Switch } from '$/components/ui/switch';
-  import { Toggle } from '$/components/ui/toggle';
-  import VersionSecurityToolbar from '$/components/VersionSecurityToolbar.svelte';
-  import View from '$/components/View.svelte';
-  import type { EditorMode, Tab } from '$/types';
-  import { shouldShowEditorChooser } from '$/util/migration/domainMigration';
+  import { DIAGRAM_LABELS, TID } from '$/constants';
   import { PanZoomState } from '$/util/panZoom';
-  import { env } from '$/util/env';
-  import { validatedState, updateCodeStore, urls } from '$/util/state.svelte';
-  import { logEvent, logMermaidChartClick } from '$/util/stats';
-  import { getContactSalesUrl, initHandler } from '$/util/util';
+  import {
+    defaultState,
+    inputState,
+    replaceInputState,
+    updateCode,
+    updateCodeStore,
+    urls,
+    validatedState
+  } from '$/util/state.svelte';
+  import { initHandler } from '$/util/util';
+  import { notify } from '$/util/notify';
+  import { mode, setMode } from 'mode-watcher';
   import { onMount } from 'svelte';
-  import CodeIcon from '~icons/custom/code';
-  import HistoryIcon from '~icons/material-symbols/history';
-  import GearIcon from '~icons/material-symbols/settings-outline-rounded';
+  import {
+    Code2,
+    LayoutTemplate,
+    History as HistoryIcon,
+    FolderOpen,
+    FilePlus2,
+    Save,
+    X,
+    Workflow,
+    Check,
+    AlertCircle
+  } from 'lucide-svelte';
 
+  type Panel = 'code' | 'templates' | 'history';
+  let panel = $state<Panel | null>(null);
+  let width = $state(1200);
+  let isMobile = $derived(width < 768);
+  let fileInput: HTMLInputElement;
+  let fileName = $state('未命名图表.mmd');
   const panZoomState = new PanZoomState();
+  const panels = [
+    { id: 'code', label: '代码', icon: Code2 },
+    { id: 'templates', label: '模板', icon: LayoutTemplate },
+    { id: 'history', label: '历史', icon: HistoryIcon }
+  ] as const;
+  const titles = { code: '代码编辑', templates: '图表模板', history: '本地历史' };
 
-  const tabSelectHandler = (tab: Tab) => {
-    const editorMode: EditorMode = tab.id === 'code' ? 'code' : 'config';
-    updateCodeStore({ editorMode });
+  const backup = () => addAutoEntry($state.snapshot(inputState));
+  const newDiagram = () => {
+    backup();
+    replaceInputState({ ...defaultState });
+    fileName = '未命名图表.mmd';
+    panel = 'code';
+  };
+  const openFile = async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    try {
+      if (!/\.mmd$/i.test(file.name)) throw new Error('请选择 .mmd 源码文件');
+      const code = await file.text();
+      backup();
+      updateCode(code, { resetPanZoom: true, updateDiagram: true });
+      fileName = file.name;
+      panel = 'code';
+    } catch (error) {
+      notify(error instanceof Error ? error.message : '读取文件失败，当前图表已保留');
+    } finally {
+      fileInput.value = '';
+    }
+  };
+  const saveSource = () => {
+    const url = URL.createObjectURL(
+      new Blob([inputState.code], { type: 'text/plain;charset=utf-8' })
+    );
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  const editorTabs: Tab[] = [
-    {
-      icon: CodeIcon,
-      id: 'code',
-      title: 'Code'
-    },
-    {
-      icon: GearIcon,
-      id: 'config',
-      title: 'Config'
-    }
-  ];
-
-  let width = $state(0);
-  let isMobile = $derived(width < 640);
-  let isViewMode = $state(true);
-  let showEditorChooser = $state(false);
-
-  onMount(async () => {
-    showEditorChooser = shouldShowEditorChooser();
-    await initHandler();
-    window.addEventListener('appinstalled', () => {
-      logEvent('pwaInstalled', { isMobile });
-    });
-  });
-
-  // Record the Timeline for the whole session, not just while the panel is open.
+  onMount(initHandler);
   onMount(() => startAutoSave());
-
-  let isHistoryOpen = $state(false);
-
-  let editorPane: Resizable.Pane | undefined;
-  $effect(() => {
-    if (isMobile) {
-      editorPane?.resize(50);
-    }
-  });
 </script>
 
-<div class="flex h-full flex-col overflow-hidden">
-  {#snippet mobileToggle()}
-    <div class="flex items-center gap-2">
-      Edit <Switch
-        id="editorMode"
-        class="data-[state=checked]:bg-accent"
-        bind:checked={isViewMode}
-        onclick={() => {
-          logEvent('mobileViewToggle');
-        }} /> View
+<svelte:window bind:innerWidth={width} />
+
+<div class="workspace flex h-full flex-col overflow-hidden">
+  <header
+    class="workspace-header flex h-14 shrink-0 items-center justify-between gap-2 border-b bg-card px-3 sm:px-5">
+    <div class="flex min-w-0 items-center gap-3">
+      <span
+        class="brand-mark flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-foreground"
+        ><Workflow size={19} strokeWidth={1.8} /></span>
+      <div class="min-w-0">
+        <h1 class="sr-only text-sm font-semibold tracking-tight sm:not-sr-only">
+          Mermaid <span class="hidden sm:inline">离线编辑器</span>
+        </h1>
+        <p class="hidden truncate text-[11px] text-muted-foreground sm:block">{fileName}</p>
+      </div>
     </div>
-  {/snippet}
+    <div class="flex shrink-0 items-center gap-1 sm:gap-2">
+      <Button variant="ghost" size="sm" onclick={newDiagram} title="新建图表" aria-label="新建图表"
+        ><FilePlus2 /><span class="hidden lg:inline">新建</span></Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        onclick={() => fileInput.click()}
+        title="打开 .mmd 文件"
+        aria-label="打开文件"><FolderOpen /><span class="hidden sm:inline">打开</span></Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        onclick={saveSource}
+        title="保存源码 .mmd"
+        aria-label="保存源码"><Save /><span class="hidden sm:inline">保存源码</span></Button>
+      <span class="mx-1 h-5 w-px bg-border"></span>
+      <Share />
+      <Button
+        variant="ghost"
+        size="icon"
+        data-testid={TID.themeToggleButton}
+        title="切换为{mode.current === 'dark' ? '浅色' : '深色'}主题"
+        onclick={() => setMode(mode.current === 'dark' ? 'light' : 'dark')}><ThemeIcon /></Button>
+      <Actions />
+    </div>
+    <input
+      class="hidden"
+      type="file"
+      accept=".mmd"
+      bind:this={fileInput}
+      onchange={openFile}
+      data-testid="source-file-input"
+      aria-label="打开 Mermaid 源码" />
+  </header>
 
-  <Navbar mobileToggle={isMobile ? mobileToggle : undefined}>
-    <Toggle bind:pressed={isHistoryOpen} size="sm" title="History" aria-label="History">
-      <HistoryIcon />
-    </Toggle>
-    <Share />
-    {#if env.isEnabledMermaidChartLinks}
-      <Separator orientation="vertical" />
-      <McWrapper labelPrefix="Opens ">
-        <Button
-          size="sm"
-          href={getContactSalesUrl()}
-          target="_blank"
-          onclick={() => logMermaidChartClick('contactSales')}>
-          <MermaidChartIcon />
-          Contact sales
-        </Button>
-      </McWrapper>
-      <McWrapper>
-        <Button
-          variant="accent"
-          size="sm"
-          href={urls.current.mermaidChart({ medium: 'save_diagram' }).save}
-          target="_blank"
-          onclick={() => logMermaidChartClick('saveDiagram')}>
-          <MermaidChartIcon />
-          Save diagram
-        </Button>
-      </McWrapper>
-    {/if}
-  </Navbar>
-
-  <div class="flex flex-1 flex-col overflow-hidden" bind:clientWidth={width}>
-    <div
-      class={[
-        'size-full',
-        isMobile && ['w-[200%] duration-300', isViewMode && '-translate-x-1/2']
-      ]}>
-      <Resizable.PaneGroup
-        direction="horizontal"
-        autoSaveId="liveEditor"
-        class="gap-4 p-2 pt-0 sm:gap-0 sm:p-6 sm:pt-0">
-        <Resizable.Pane bind:this={editorPane} defaultSize={30} minSize={15}>
-          <div class="flex h-full flex-col gap-4 sm:gap-6">
-            <Card
-              onselect={tabSelectHandler}
-              isOpen
-              tabs={editorTabs}
-              activeTabID={validatedState.current.editorMode}
-              isClosable={false}>
-              {#snippet actions()}
-                <DiagramDocButton />
-              {/snippet}
-              <Editor {isMobile} />
-            </Card>
-
-            <div class="group flex flex-wrap justify-between gap-4 sm:gap-6">
-              <Preset />
-              <Actions />
-            </div>
-          </div>
-        </Resizable.Pane>
-        <Resizable.Handle class="mr-1 hidden opacity-0 sm:block" />
-        <Resizable.Pane minSize={15} class="relative flex h-full flex-1 flex-col overflow-hidden">
-          <View {panZoomState} shouldShowGrid={validatedState.current.grid} />
-          <div class="absolute top-0 left-5 hidden md:block"><EnhancedEditsButton /></div>
-          <div class="absolute top-0 right-0">
-            <PanZoomToolbar {panZoomState} fullScreenHref={urls.current.view} />
-          </div>
-          <div class="absolute right-0 bottom-0"><VersionSecurityToolbar /></div>
-          <div class="absolute bottom-0 left-0 sm:left-5"><SyncRoughToolbar /></div>
-        </Resizable.Pane>
-        {#if isHistoryOpen}
-          <Resizable.Handle class="ml-1 hidden opacity-0 sm:block" />
-          <Resizable.Pane minSize={15} defaultSize={30} class="hidden h-full grow flex-col sm:flex">
-            <History />
-          </Resizable.Pane>
+  <div class="flex min-h-0 flex-1">
+    <nav
+      aria-label="工作区工具"
+      class="tool-rail flex w-14 shrink-0 flex-col items-center gap-2 border-r bg-card py-4">
+      {#each panels as item (item.id)}
+        <button
+          class={[
+            'rail-button flex w-11 flex-col items-center gap-1 rounded-lg py-2.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+            panel === item.id && 'active'
+          ]}
+          aria-label={titles[item.id]}
+          aria-pressed={panel === item.id}
+          title={titles[item.id]}
+          onclick={() => (panel = panel === item.id ? null : item.id)}>
+          <item.icon size={19} strokeWidth={1.65} /><span class="text-[10px] font-medium"
+            >{item.label}</span>
+        </button>
+      {/each}
+      <span class="mt-auto text-[10px] text-muted-foreground [writing-mode:vertical-rl]"
+        >本机 · 离线</span>
+    </nav>
+    <div class="relative min-w-0 flex-1">
+      {#if isMobile}
+        {@render canvas()}
+        {#if panel}
+          <aside id="workspace-panel" class="absolute inset-0 z-20 flex flex-col bg-card">
+            {@render panelContent()}
+          </aside>
         {/if}
-      </Resizable.PaneGroup>
+      {:else}
+        <Resizable.PaneGroup direction="horizontal" class="h-full">
+          {#if panel}
+            <Resizable.Pane defaultSize={30} minSize={22} maxSize={55} class="min-w-0 bg-card">
+              <aside id="workspace-panel" class="flex h-full min-h-0 flex-col">
+                {@render panelContent()}
+              </aside>
+            </Resizable.Pane>
+            <Resizable.Handle class="w-px bg-border after:-inset-x-1" />
+          {/if}
+          <Resizable.Pane minSize={35} class="min-w-0">{@render canvas()}</Resizable.Pane>
+        </Resizable.PaneGroup>
+      {/if}
     </div>
   </div>
+  <footer
+    class="flex h-7 shrink-0 items-center justify-between border-t bg-card px-4 text-[10px] text-muted-foreground">
+    <button
+      class="flex items-center gap-1.5 hover:text-foreground"
+      onclick={() => (panel = 'code')}
+      aria-label={validatedState.current.error ? '查看图表错误' : '查看图表代码'}>
+      {#if validatedState.current.error}<AlertCircle
+          size={12}
+          class="text-destructive" />图表有误，查看详情{:else}<Check
+          size={12}
+          class="text-accent" />语法通过{/if}
+    </button>
+    <span class="hidden sm:inline"
+      >{DIAGRAM_LABELS[validatedState.current.diagramType ?? ''] ?? 'Mermaid 图表'}<span
+        class="mx-2 opacity-40">/</span
+      >数据仅保存在本机</span>
+    <span>{inputState.code.split('\n').length} 行</span>
+  </footer>
 </div>
 
-<EditorChooserModal bind:open={showEditorChooser} />
+{#snippet panelContent()}
+  <div class="flex h-12 shrink-0 items-center justify-between border-b px-4">
+    <h2 class="text-xs font-semibold tracking-wide">{panel ? titles[panel] : ''}</h2>
+    <Button variant="ghost" size="icon" title="收起侧栏" onclick={() => (panel = null)}
+      ><X size={16} /></Button>
+  </div>
+  <div class="min-h-0 flex-1">
+    {#if panel === 'code'}
+      <div class="flex h-full min-h-0 flex-col">
+        <div
+          role="tablist"
+          aria-label="编辑内容"
+          class="flex h-11 shrink-0 items-center gap-1 border-b px-3">
+          {#each [['code', '图表代码'], ['config', '渲染配置']] as [id, label] (id)}
+            <button
+              role="tab"
+              aria-selected={validatedState.current.editorMode === id}
+              class={[
+                'editor-tab rounded-md px-3 py-1.5 text-xs',
+                validatedState.current.editorMode === id && 'active'
+              ]}
+              onclick={() => updateCodeStore({ editorMode: id as 'code' | 'config' })}
+              >{label}</button>
+          {/each}
+        </div>
+        <div class="min-h-0 flex-1 pt-3"><Editor {isMobile} /></div>
+      </div>
+    {:else if panel === 'templates'}
+      <Preset />
+    {:else if panel === 'history'}
+      <History />
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet canvas()}
+  <div class="canvas-shell relative h-full overflow-hidden">
+    <div class="h-full px-3 pt-4 pb-20">
+      <View {panZoomState} shouldShowGrid={validatedState.current.grid} />
+    </div>
+    <div class="pointer-events-none absolute inset-x-0 bottom-5 flex justify-center px-2">
+      <div
+        class="canvas-dock pointer-events-auto flex items-center rounded-xl border bg-card/95 p-1 shadow-sm backdrop-blur-sm">
+        <PanZoomToolbar {panZoomState} fullScreenHref={urls.current.view} compact />
+        <span class="mx-1 h-5 w-px bg-border"></span>
+        <SyncRoughToolbar />
+      </div>
+    </div>
+  </div>
+{/snippet}

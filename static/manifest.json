@@ -1,18 +1,18 @@
 {
-	"short_name": "Mermaid",
-	"name": "Mermaid Live Editor",
-	"icons": [
-		{
-			"src": "/favicon.png",
-			"type": "image/png",
-			"sizes": "512x512"
-		}
-	],
-	"start_url": "/edit",
-	"background_color": "#ff3670",
-	"display": "standalone",
-	"scope": "/edit",
-	"theme_color": "#ff3670",
-	"description": "FlowChart & Diagrams Editor.",
-	"orientation": "natural"
+  "short_name": "Mermaid",
+  "name": "Mermaid 离线编辑器",
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ],
+  "start_url": "/edit",
+  "background_color": "#f4f6f8",
+  "display": "standalone",
+  "scope": "/edit",
+  "theme_color": "#2d6a72",
+  "description": "本地 Mermaid 图表工作台",
+  "orientation": "natural"
 }

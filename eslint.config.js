@@ -1,4 +1,4 @@
-import { includeIgnoreFile } from '@eslint/compat';
+import { fixupPluginRules, includeIgnoreFile } from '@eslint/compat';
 import js from '@eslint/js';
 import prettier from 'eslint-config-prettier';
 import sortKeysPlugin from 'eslint-plugin-sort-keys';
@@ -42,7 +42,7 @@ export default defineConfig(
   {
     files: ['src/**'],
     plugins: {
-      'sort-keys': sortKeysPlugin
+      'sort-keys': fixupPluginRules(sortKeysPlugin)
     },
     rules: {
       'sort-keys/sort-keys-fix': ['error', 'asc', { minKeys: 5 }]

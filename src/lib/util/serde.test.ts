@@ -11,6 +11,20 @@ const verifySerde = (state: State, serde?: SerdeType): string => {
 };
 
 describe('Serde tests', () => {
+  it('keeps old links with object-valued config readable', () => {
+    const legacy = { ...defaultState, mermaid: { theme: 'forest' } } as unknown as State;
+    expect(deserializeState(serializeState(legacy, 'base64'))).toEqual({
+      ...defaultState,
+      mermaid: '{\n  "theme": "forest"\n}'
+    });
+  });
+  it('rejects decoded values without a diagram string', () => {
+    for (const code of [null, 3, {}, []]) {
+      expect(() =>
+        deserializeState(serializeState({ ...defaultState, code } as unknown as State))
+      ).toThrow('图表数据格式无效');
+    }
+  });
   it('should serialize and deserialize with default serde', () => {
     expect(verifySerde(defaultState)).toMatchInlineSnapshot(
       `"pako:eNpVjLFuwkAQRH9ltVUi4R9wgQR2QoMEBVUcipW99p3gbk_rs1Bk-985A5GS6UbvzYxYS8OYY3uVW21II5zKbw8pm6owavvoqD9Dlq2nHUdw4vlngu3bTqA3EoL13fvT3y4SFON-0Riisf4yP1Hx2B88T1BWewpRwvkvOd1kgo_KHk26_0-Mclp9Vi3lLWU1KRSkDwVX2KltMI868Aodq6Ol4jgnFMh_ibhfqjJ0BtPFtU9tCA1FLi11Si9lvgMWKFYF"`

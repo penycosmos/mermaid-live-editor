@@ -1,4 +1,3 @@
-import type { Component } from 'svelte';
 import type { HTMLInputTypeAttribute } from 'svelte/elements';
 import 'unplugin-icons/types/svelte';
 
@@ -10,16 +9,6 @@ export interface MarkerData {
   startColumn: number;
   endLineNumber: number;
   endColumn: number;
-}
-
-export interface TabEvents {
-  select: Tab;
-}
-
-export interface Tab {
-  id: string;
-  title: string;
-  icon: Component;
 }
 
 export interface State {
@@ -34,7 +23,8 @@ export interface State {
   editorMode?: EditorMode;
   pan?: { x: number; y: number };
   zoom?: number;
-  loader?: LoaderConfig;
+  // Retained as opaque metadata when opening old local states.
+  loader?: unknown;
 }
 
 export interface ValidatedState extends State {
@@ -45,43 +35,16 @@ export interface ValidatedState extends State {
   serialized: string;
 }
 
-export interface GistLoaderConfig {
-  url: string;
+export type HistoryType = 'auto' | 'manual';
+export interface HistoryEntry {
+  id: string;
+  state: State;
+  time: number;
+  name?: string;
+  type: HistoryType;
 }
-
-export interface LoadingState {
-  loading: boolean;
-  message?: string;
-}
-export interface FileLoaderConfig {
-  codeURL: string;
-  configURL?: string;
-}
-export type LoaderConfig =
-  | {
-      type: 'gist';
-      config: GistLoaderConfig;
-    }
-  | {
-      type: 'files';
-      config: FileLoaderConfig;
-    };
-export type HistoryType = 'auto' | 'manual' | 'loader';
-export type HistoryEntry = { id: string; state: State; time: number; url?: string } & (
-  | {
-      type: 'loader';
-      name: string;
-    }
-  | {
-      type: HistoryType;
-      name?: string;
-    }
-);
 
 export type EditorMode = 'code' | 'config';
-
-export type Loader = (url: string) => Promise<State>;
-export type Optional<T, K extends keyof T> = Pick<Partial<T>, K> & Omit<T, K>;
 
 export interface ErrorHash {
   loc: {

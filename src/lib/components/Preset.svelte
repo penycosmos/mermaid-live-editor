@@ -1,13 +1,8 @@
 <script lang="ts">
-  import Card from '$/components/Card/Card.svelte';
-  import { Button, buttonVariants } from '$/components/ui/button';
-  import * as Popover from '$/components/ui/popover';
   import { getSampleDiagrams, type SampleExample } from '$/util/mermaid';
-  import { updateCode } from '$lib/util/state.svelte';
-  import { logEvent } from '$lib/util/stats';
-  import { cn } from '$lib/utils';
-  import ShapesIcon from '~icons/material-symbols/account-tree-outline-rounded';
-  import ChevronDownIcon from '~icons/material-symbols/keyboard-arrow-down-rounded';
+  import { updateCode, inputState } from '$/util/state.svelte';
+  import { addAutoEntry } from './History/historyState.svelte';
+  import { ChevronRight } from 'lucide-svelte';
 
   const extras: Record<string, SampleExample[]> = {
     ZenUML: [
@@ -43,15 +38,43 @@
   };
 
   const samples = { ...getSampleDiagrams(), ...extras };
-
-  const loadSampleDiagram = (diagramType: string, example: SampleExample): void => {
-    updateCode(example.code, {
-      resetPanZoom: true,
-      updateDiagram: true
-    });
-    logEvent('loadSampleDiagram', { diagramType, exampleTitle: example.title });
+  const labels: Record<string, string> = {
+    Architecture: '架构图',
+    Block: '块图',
+    C4: 'C4 架构',
+    Class: '类图',
+    'Cynefin Framework': 'Cynefin 框架',
+    'Entity Relationship': '实体关系图',
+    'Event Modeling': '事件建模',
+    Flowchart: '流程图',
+    Gantt: '甘特图',
+    Git: 'Git 分支图',
+    Ishikawa: '鱼骨图',
+    Journey: '用户旅程',
+    Kanban: '看板',
+    Mindmap: '思维导图',
+    Packet: '数据包',
+    Pie: '饼图',
+    Quadrant: '象限图',
+    Radar: '雷达图',
+    'Railroad (ABNF)': '语法图 · ABNF',
+    'Railroad (EBNF)': '语法图 · EBNF',
+    'Railroad (IR)': '语法图 · IR',
+    'Railroad (PEG)': '语法图 · PEG',
+    Requirement: '需求图',
+    Sankey: '桑基图',
+    Sequence: '时序图',
+    State: '状态图',
+    Timeline: '时间线',
+    TreeView: '树形图',
+    Treemap: '矩形树图',
+    'Use Case': '用例图',
+    'User Journey': '用户旅程',
+    Venn: '韦恩图',
+    'Wardley Maps': 'Wardley 地图',
+    XY: 'XY 图表',
+    ZenUML: 'ZenUML'
   };
-
   const mainDiagrams = [
     'Flowchart',
     'Class',
@@ -60,51 +83,53 @@
     'State',
     'Mindmap'
   ];
-
-  const diagramOrder = [
+  const order = [
     ...mainDiagrams,
     ...Object.keys(samples)
-      .filter((key) => !mainDiagrams.includes(key))
+      .filter((name) => !mainDiagrams.includes(name))
       .sort()
   ];
+  const load = (example: SampleExample) => {
+    addAutoEntry($state.snapshot(inputState));
+    updateCode(example.code, { resetPanZoom: true, updateDiagram: true });
+  };
 </script>
 
-<Card title="Sample Diagrams" isOpen isStackable icon={{ component: ShapesIcon }}>
-  <div class="flex h-fit max-h-52 flex-wrap gap-2 overflow-y-auto p-2">
-    {#each diagramOrder as sample (sample)}
-      {@const examples = samples[sample]}
-      <div class="flex min-w-20 flex-grow">
-        <Button
-          size="sm"
-          class={cn('flex-grow normal-case', examples.length > 1 && 'rounded-r-none')}
-          onclick={() => loadSampleDiagram(sample, examples[0])}>
-          {sample}
-        </Button>
-        {#if examples.length > 1}
-          <Popover.Root>
-            <Popover.Trigger
-              aria-label="Choose a {sample} example"
-              class={cn(
-                buttonVariants({ size: 'sm' }),
-                'rounded-l-none border-l border-primary-foreground/30 px-0.5 [&_svg]:size-5'
-              )}>
-              <ChevronDownIcon />
-            </Popover.Trigger>
-            <Popover.Content align="start" class="flex w-fit flex-col gap-1 p-1">
-              {#each examples as example (example.title)}
-                <Popover.Close
-                  class={cn(
-                    buttonVariants({ variant: 'ghost', size: 'sm' }),
-                    'justify-start normal-case'
-                  )}
-                  onclick={() => loadSampleDiagram(sample, example)}>
-                  {example.title}
-                </Popover.Close>
-              {/each}
-            </Popover.Content>
-          </Popover.Root>
+<div class="h-full overflow-auto p-4">
+  <p class="mb-4 text-xs leading-5 text-muted-foreground">
+    选择一种图表开始。当前内容会先保存到本地历史。
+  </p>
+  <div class="flex flex-col gap-1">
+    {#each order as name, index (name)}
+      {#if index === 0 || index === mainDiagrams.length}<h3
+          class="mb-1 px-2 pt-3 text-[10px] font-semibold tracking-wide text-muted-foreground">
+          {index === 0 ? '常用图表' : '更多类型'}
+        </h3>{/if}
+      <div class="group flex items-center rounded-lg hover:bg-muted">
+        <button
+          class="flex min-w-0 flex-1 items-center justify-between gap-2 px-3 py-2.5 text-left text-xs"
+          onclick={() => load(samples[name][0])}
+          title={name}>
+          <span>{labels[name] ?? name}</span><ChevronRight
+            size={14}
+            class="text-muted-foreground opacity-40" />
+        </button>
+        {#if samples[name].length > 1}
+          <select
+            aria-label="{labels[name] ?? name}示例"
+            class="mr-2 max-w-24 rounded border bg-card p-1 text-[10px] text-muted-foreground"
+            value=""
+            onchange={(event) => {
+              load(samples[name][Number(event.currentTarget.value)]);
+              event.currentTarget.value = '';
+            }}>
+            <option value="" disabled>更多示例</option>
+            {#each samples[name] as example, i (example.title)}<option value={i}
+                >示例 {i + 1}</option
+              >{/each}
+          </select>
         {/if}
       </div>
     {/each}
   </div>
-</Card>
+</div>

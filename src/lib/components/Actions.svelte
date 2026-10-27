@@ -1,326 +1,148 @@
 <script lang="ts">
-  import Card from '$/components/Card/Card.svelte';
-  import CopyButton from '$/components/CopyButton.svelte';
-  import CopyInput from '$/components/CopyInput.svelte';
-  import ExternalLinkWrapper from '$/components/ExternalLinkWrapper.svelte';
-  import { Button } from '$/components/ui/button';
+  import { Button, buttonVariants } from '$/components/ui/button';
+  import * as Dialog from '$/components/ui/dialog';
   import { Input } from '$/components/ui/input';
-  import { Separator } from '$/components/ui/separator';
   import * as ToggleGroup from '$/components/ui/toggle-group';
   import { TID } from '$/constants';
-  import { getDomain } from '$/util/util';
-  import { browser } from '$app/environment';
-  import { waitForRender } from '$lib/util/autoSync';
-  import { inputState, updateCodeStore, urls, validatedState } from '$lib/util/state.svelte';
-  import { logEvent } from '$lib/util/stats';
-  import { version as FAVersion } from '@fortawesome/fontawesome-free/package.json';
-  import dayjs from 'dayjs';
+  import { waitForRender } from '$/util/autoSync';
+  import { prepareExportSvg } from '$/util/exportSvg';
+  import { inputState, updateCodeStore, validatedState } from '$/util/state.svelte';
+  import { notify } from '$/util/notify';
   import { toBase64 } from 'js-base64';
-  import DownloadIcon from '~icons/material-symbols/download';
-  import ExternalLinkIcon from '~icons/material-symbols/open-in-new-rounded';
-  import WidthIcon from '~icons/material-symbols/width-rounded';
+  import dayjs from 'dayjs';
+  import { Download, Copy, Image as ImageIcon, FileImage } from 'lucide-svelte';
 
-  const FONT_AWESOME_URL = `https://cdnjs.cloudflare.com/ajax/libs/font-awesome/${FAVersion}/css/all.min.css`;
+  let imageSizeMode = $state<'auto' | 'width' | 'height'>('auto');
+  let imageSize = $state(1080);
+  let exporting = $state(false);
 
-  type Exporter = (context: CanvasRenderingContext2D, image: HTMLImageElement) => () => void;
-
-  const getFileName = (extension: string) =>
-    `mermaid-diagram-${dayjs().format('YYYY-MM-DD-HHmmss')}.${extension}`;
-
-  /**
-   * Fix text clipping in exported SVG for hand-drawn (rough) mode.
-   * svg2roughjs copies foreignObject elements but their height is often insufficient,
-   * causing text bottom edges to be cut off regardless of language.
-   */
-  const fixForeignObjectClipping = (svg: HTMLElement) => {
-    const foreignObjects = svg.querySelectorAll('foreignObject');
-    foreignObjects.forEach((foreignObj) => {
-      const currentHeight = parseFloat(foreignObj.getAttribute('height') || '0');
-      if (currentHeight <= 0) return;
-
-      // Centered labels can extend beyond the measured viewport horizontally.
-      foreignObj.style.overflow = 'visible';
-
-      const currentY = parseFloat(foreignObj.getAttribute('y') || '0');
-      const newHeight = currentHeight * 1.5;
-      const heightDiff = newHeight - currentHeight;
-
-      foreignObj.setAttribute('height', newHeight.toString());
-      foreignObj.setAttribute('y', (currentY - heightDiff / 2).toString());
-
-      // Ensure inner HTML elements are vertically centered within the expanded area
-      const htmlElements = foreignObj.querySelectorAll('div, span, p');
-      htmlElements.forEach((htmlEl) => {
-        const el = htmlEl as HTMLElement;
-        el.style.display = 'flex';
-        el.style.alignItems = 'center';
-        el.style.justifyContent = 'center';
-        el.style.height = '100%';
-      });
-    });
+  const download = (extension: string, href: string) => {
+    const link = document.createElement('a');
+    link.download = `mermaid-${dayjs().format('YYYY-MM-DD-HHmmss')}.${extension}`;
+    link.href = href;
+    link.click();
   };
 
-  const getSvgElement = () => {
-    const svgElement = document.querySelector('#container svg')?.cloneNode(true) as HTMLElement;
-    svgElement.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
-    return svgElement;
-  };
-
-  const getBase64SVG = (svg?: HTMLElement, width?: number, height?: number): string => {
-    if (svg) {
-      // Prevents the SVG size of the interface from being changed
-      svg = svg.cloneNode(true) as HTMLElement;
-    }
-    if (height) {
-      svg?.setAttribute('height', `${height}px`);
-    }
-    if (width) {
-      svg?.setAttribute('width', `${width}px`);
-    }
-    // Workaround https://stackoverflow.com/questions/28690643/firefox-error-rendering-an-svg-image-to-html5-canvas-with-drawimage
-
-    if (!svg) {
-      svg = getSvgElement();
-    }
-
-    if (validatedState.current.rough) {
-      fixForeignObjectClipping(svg);
-    }
-
-    svg.style.backgroundColor = window
-      .getComputedStyle(document.body)
-      .getPropertyValue('--background');
-
-    const svgString = svg.outerHTML
-      .replaceAll('<br>', '<br/>')
-      .replaceAll(/<img([^>]*)>/g, (m, g: string) => `<img ${g} />`);
-
-    return toBase64(`<?xml version="1.0" encoding="UTF-8"?>
-<?xml-stylesheet href="${FONT_AWESOME_URL}" type="text/css"?>
-${svgString}`);
-  };
-
-  const simulateDownload = (download: string, href: string): void => {
-    const a = document.createElement('a');
-    a.download = download;
-    a.href = href;
-    a.click();
-    a.remove();
-  };
-
-  const exportImage = async (event: Event, exporter: Exporter) => {
-    updateCodeStore({ panZoom: false });
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    await waitForRender();
-    const canvas = document.createElement('canvas');
-    const svg = document.querySelector<HTMLElement>('#container svg');
-    if (!svg) {
-      throw new Error('svg not found');
-    }
-
-    const box = svg.getBoundingClientRect();
-
-    // In rough mode, SVG has width/height="100%" so getBoundingClientRect returns
-    // the container size, not the actual diagram size. Use viewBox dimensions instead.
-    const svgEl = svg as unknown as SVGSVGElement;
-    const viewBox = svgEl.viewBox?.baseVal;
-    const contentWidth = viewBox && viewBox.width > 0 ? viewBox.width : box.width;
-    const contentHeight = viewBox && viewBox.height > 0 ? viewBox.height : box.height;
-
-    if (imageSizeMode === 'width') {
-      const ratio = contentHeight / contentWidth;
-      canvas.width = imageSize;
-      canvas.height = imageSize * ratio;
-    } else if (imageSizeMode === 'height') {
-      const ratio = contentWidth / contentHeight;
-      canvas.width = imageSize * ratio;
-      canvas.height = imageSize;
-    } else {
-      const multiplier = 2;
-      canvas.width = contentWidth * multiplier;
-      canvas.height = contentHeight * multiplier;
-    }
-
-    const context = canvas.getContext('2d');
-    if (!context) {
-      throw new Error('context not found');
-    }
-
-    context.fillStyle = window.getComputedStyle(document.body).getPropertyValue('--background');
-    context.fillRect(0, 0, canvas.width, canvas.height);
-
-    const image = new Image();
-    image.addEventListener('load', () => {
-      exporter(context, image)();
-      updateCodeStore({ panZoom: true });
-    });
-    image.src = `data:image/svg+xml;base64,${getBase64SVG(svg, canvas.width, canvas.height)}`;
-    // Fallback to set panZoom to true after 2 seconds
-    // This is a workaround for the case when the image is not loaded
-    setTimeout(() => {
-      if (!inputState.panZoom) {
-        updateCodeStore({ panZoom: true });
-      }
-    }, 2000);
-    event.stopPropagation();
-    event.preventDefault();
-  };
-
-  const downloadImage: Exporter = (context, image) => {
-    return () => {
-      const { canvas } = context;
-      context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      simulateDownload(
-        getFileName('png'),
-        canvas.toDataURL('image/png').replace('image/png', 'image/octet-stream')
-      );
-    };
-  };
-
-  const isClipboardAvailable = (): boolean => {
-    return Object.prototype.hasOwnProperty.call(window, 'ClipboardItem');
-  };
-
-  const clipboardCopy: Exporter = (context, image) => {
-    return () => {
-      const { canvas } = context;
-      context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob((blob) => {
-        try {
-          if (!blob) {
-            throw new Error('blob is empty');
-          }
-          void navigator.clipboard.write([
-            new ClipboardItem({
-              [blob.type]: blob
-            })
-          ]);
-        } catch (error) {
-          console.error(error);
-        }
-      });
-    };
-  };
-
-  const onCopyClipboard = async (event?: Event) => {
-    if (!event) {
+  const exportDiagram = async (format: 'png' | 'svg' | 'clipboard') => {
+    if (exporting) return;
+    if (
+      imageSizeMode !== 'auto' &&
+      (!Number.isFinite(imageSize) || imageSize < 3 || imageSize > 10000)
+    ) {
+      notify('图片尺寸须为 3 至 10000 像素');
       return;
     }
-    await exportImage(event, clipboardCopy);
-    logEvent('copyClipboard');
-  };
-
-  const onDownloadPNG = async (event: Event) => {
-    await exportImage(event, downloadImage);
-    logEvent('download', {
-      type: 'png'
-    });
-  };
-
-  const onDownloadSVG = () => {
-    simulateDownload(getFileName('svg'), `data:image/svg+xml;base64,${getBase64SVG()}`);
-    logEvent('download', {
-      type: 'svg'
-    });
-  };
-
-  let gistURL = $state('');
-  $effect(() => {
-    const { loader } = validatedState.current;
-    if (loader?.type === 'gist') {
-      gistURL = loader.config.url;
+    const panZoom = inputState.panZoom;
+    exporting = true;
+    try {
+      updateCodeStore({ panZoom: false });
+      // State validation is asynchronous; allow the new viewport to reach the render queue.
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await waitForRender();
+      const source = document.querySelector<SVGSVGElement>('#container svg');
+      if (!source) throw new Error('没有可导出的图表');
+      const svg = await prepareExportSvg(source, inputState.rough);
+      const box = source.getBoundingClientRect();
+      const viewBox = source.viewBox.baseVal;
+      const width = viewBox.width || box.width;
+      const height = viewBox.height || box.height;
+      const canvas = document.createElement('canvas');
+      canvas.width =
+        imageSizeMode === 'width'
+          ? imageSize
+          : imageSizeMode === 'height'
+            ? (imageSize * width) / height
+            : width * 2;
+      canvas.height =
+        imageSizeMode === 'height'
+          ? imageSize
+          : imageSizeMode === 'width'
+            ? (imageSize * height) / width
+            : height * 2;
+      svg.setAttribute('width', String(canvas.width));
+      svg.setAttribute('height', String(canvas.height));
+      const data = `data:image/svg+xml;base64,${toBase64(new XMLSerializer().serializeToString(svg))}`;
+      if (format === 'svg') {
+        download('svg', data);
+        return;
+      }
+      const image = new Image();
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error('图表转换失败，请检查图表中的本地资源'));
+        image.src = data;
+      });
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('无法创建图片画布');
+      context.fillStyle = getComputedStyle(document.body).getPropertyValue('--background');
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      if (format === 'png') download('png', canvas.toDataURL('image/png'));
+      else {
+        const blob = await new Promise<Blob>((resolve, reject) =>
+          canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('无法生成图片'))))
+        );
+        await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+        notify('图片已复制');
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : '导出失败');
+    } finally {
+      updateCodeStore({ panZoom });
+      exporting = false;
     }
-  });
-
-  const loadGist = () => {
-    if (!gistURL) {
-      return alert('Please enter a Gist URL first');
-    }
-    window.location.href = `${window.location.pathname}?gist=${gistURL}`;
-    logEvent('loadGist');
   };
-
-  let imageSizeMode: 'auto' | 'width' | 'height' = $state('auto');
-
-  $effect(() => {
-    if (!imageSizeMode) {
-      imageSizeMode = 'auto';
-    }
-  });
-
-  let imageSize = $state(1080);
-
-  const isNetlify = browser && window.location.host.includes('netlify');
 </script>
 
-{#snippet dualActionButton(text: string, download: (event: Event) => unknown, url?: string)}
-  <div class="flex flex-grow gap-0.5">
-    <Button
-      class={['flex-grow', url && 'rounded-r-none']}
-      onclick={download}
-      data-testid="download-{text}">
-      <DownloadIcon />
-      {text}
-    </Button>
-    <ExternalLinkWrapper domain={getDomain(url)} isVisible={!!url}>
-      <Button class="rounded-l-none" href={url} target="_blank" rel="noreferrer noopener">
-        <ExternalLinkIcon />
-      </Button>
-    </ExternalLinkWrapper>
-  </div>
-{/snippet}
-
-<Card title="Actions" isStackable icon={{ component: DownloadIcon, class: 'rotate-180' }}>
-  <div class="flex min-w-fit flex-col gap-2 p-2">
-    <div class="flex w-full items-center gap-2 py-2 whitespace-nowrap">
-      PNG size
-      <ToggleGroup.Root type="single" variant="outline" bind:value={imageSizeMode}>
-        <ToggleGroup.Item value="auto">Auto</ToggleGroup.Item>
-        <ToggleGroup.Item value="width">Width</ToggleGroup.Item>
-        <ToggleGroup.Item value="height">Height</ToggleGroup.Item>
-      </ToggleGroup.Root>
-      {#if imageSizeMode !== 'auto'}
-        <WidthIcon
-          class={['size-6 shrink-0 transition-all', imageSizeMode === 'width' && 'rotate-90']} />
-      {/if}
-      <Input
-        type="number"
-        min="3"
-        max="10000"
-        disabled={imageSizeMode === 'auto'}
-        bind:value={imageSize} />
-    </div>
-    <div class="flex gap-2">
-      {@render dualActionButton('PNG', onDownloadPNG, urls.current.png)}
-      {@render dualActionButton('SVG', onDownloadSVG, urls.current.svg)}
-      <ExternalLinkWrapper domain={getDomain(urls.current.kroki)} isVisible={!!urls.current.kroki}>
-        <a target="_blank" rel="noreferrer" class="flex-grow" href={urls.current.kroki}>
-          <Button class="action-btn flex w-full items-center gap-2">
-            <ExternalLinkIcon /> Kroki
-          </Button>
-        </a>
-      </ExternalLinkWrapper>
-    </div>
-    <Separator />
-    {#if isClipboardAvailable()}
-      <CopyButton onclick={onCopyClipboard} label="Copy Image" />
-    {/if}
-    <ExternalLinkWrapper
-      labelPrefix="Thumbnail generated by"
-      domain={getDomain(urls.current.png)}
-      isVisible={!!urls.current.mdCode}>
-      <CopyInput value={urls.current.mdCode} label="Copy Markdown" testID={TID.copyMarkdown} />
-    </ExternalLinkWrapper>
-    <div class="flex w-full items-center gap-2">
-      <Input type="url" bind:value={gistURL} placeholder="Enter Gist URL" />
-      <Button onclick={loadGist}>Load Gist</Button>
-    </div>
-    {#if isNetlify}
-      <div class="flex w-full items-center justify-center">
-        <a class="link text-sm text-gray-500 underline" href="https://netlify.com">
-          This site is powered by Netlify
-        </a>
+<Dialog.Root>
+  <Dialog.Trigger class={buttonVariants({ variant: 'accent', size: 'sm' })}
+    ><Download /><span>导出</span></Dialog.Trigger>
+  <Dialog.Content class="sm:max-w-md">
+    <Dialog.Header
+      ><Dialog.Title>导出图表</Dialog.Title><Dialog.Description
+        >在本机生成图片，字体与图标随文件保存。</Dialog.Description
+      ></Dialog.Header>
+    <div class="flex flex-col gap-5 py-2">
+      <div class="flex flex-col gap-3">
+        <span class="text-xs font-medium">图片尺寸</span>
+        <ToggleGroup.Root
+          type="single"
+          variant="outline"
+          value={imageSizeMode}
+          onValueChange={(value) => {
+            if (value === 'auto' || value === 'width' || value === 'height') imageSizeMode = value;
+          }}>
+          <ToggleGroup.Item value="auto">自动</ToggleGroup.Item><ToggleGroup.Item value="width"
+            >指定宽度</ToggleGroup.Item
+          ><ToggleGroup.Item value="height">指定高度</ToggleGroup.Item>
+        </ToggleGroup.Root>
+        {#if imageSizeMode !== 'auto'}<label class="flex items-center gap-3 text-xs"
+            ><Input
+              type="number"
+              min="3"
+              max="10000"
+              bind:value={imageSize}
+              aria-label="导出尺寸" />像素</label
+          >{/if}
       </div>
-    {/if}
-  </div>
-</Card>
+      <div class="grid grid-cols-2 gap-3">
+        <Button
+          onclick={() => exportDiagram('png')}
+          disabled={exporting || !!validatedState.current.error}
+          data-testid={TID.downloadPNG}><ImageIcon />保存 PNG</Button>
+        <Button
+          onclick={() => exportDiagram('svg')}
+          disabled={exporting || !!validatedState.current.error}
+          data-testid={TID.downloadSVG}><FileImage />保存 SVG</Button>
+      </div>
+      {#if typeof ClipboardItem !== 'undefined'}<Button
+          variant="outline"
+          onclick={() => exportDiagram('clipboard')}
+          disabled={exporting || !!validatedState.current.error}><Copy />复制图片</Button
+        >{/if}
+      {#if exporting}<p role="status" class="text-center text-xs text-muted-foreground">
+          正在生成图片…
+        </p>{/if}
+    </div>
+  </Dialog.Content>
+</Dialog.Root>

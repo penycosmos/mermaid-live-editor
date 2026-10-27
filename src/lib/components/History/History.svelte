@@ -1,12 +1,12 @@
 <script lang="ts">
-  import Card from '$lib/components/Card/Card.svelte';
-  import type { HistoryEntry, HistoryType, State, Tab } from '$lib/types';
+  import type { State } from '$lib/types';
   import { notify, prompt } from '$lib/util/notify';
   import { serializeState } from '$lib/util/serde';
   import { inputState, replaceInputState } from '$lib/util/state.svelte';
-  import { logEvent } from '$lib/util/stats';
+
   import dayjs from 'dayjs';
   import dayjsRelativeTime from 'dayjs/plugin/relativeTime';
+  import 'dayjs/locale/zh-cn';
   import BookmarkIcon from '~icons/material-symbols/bookmark-outline-rounded';
   import TrashAltIcon from '~icons/material-symbols/delete-outline-rounded';
   import DownloadIcon from '~icons/material-symbols/download-rounded';
@@ -15,11 +15,11 @@
   import UndoIcon from '~icons/material-symbols/settings-backup-restore-rounded';
   import UploadIcon from '~icons/material-symbols/upload-rounded';
   import HistoryIcon from '~icons/mdi/clock-outline';
-  import GitAltIcon from '~icons/mdi/git';
   import OpenInNewIcon from '~icons/material-symbols/open-in-new-rounded';
   import { Button } from '../ui/button';
   import { Separator } from '../ui/separator';
   import {
+    addAutoEntry,
     addManualEntry,
     clearActive,
     historyState,
@@ -30,31 +30,13 @@
   } from './historyState.svelte';
 
   dayjs.extend(dayjsRelativeTime);
-
-  const baseTabs: Tab[] = [
-    { id: 'manual', title: 'Saved', icon: BookmarkIcon },
-    { id: 'auto', title: 'Timeline', icon: HistoryIcon }
-  ];
-  const loaderTab: Tab = { id: 'loader', title: 'Revisions', icon: GitAltIcon };
-
-  const tabs = $derived(
-    historyState.loaderEntries.length > 0 ? [loaderTab, ...baseTabs] : baseTabs
-  );
-
-  // Surface revisions once when they first appear; the user can switch away after.
-  let revisionsShown = false;
-  $effect(() => {
-    if (historyState.loaderEntries.length > 0 && !revisionsShown) {
-      revisionsShown = true;
-      setMode('loader');
-    }
-  });
+  dayjs.locale('zh-cn');
 
   // Inline rename state for a single entry.
   let editingId: string | null = $state(null);
   let editValue = $state('');
 
-  const commitRename = () => {
+  const commit重命名 = () => {
     if (editingId !== null && editValue.trim()) {
       renameEntry(editingId, editValue);
     }
@@ -63,13 +45,9 @@
 
   const emptyMessage = $derived(
     historyState.mode === 'auto'
-      ? 'No timeline snapshots yet.\nThe Timeline is saved automatically every minute.'
-      : 'No saved states yet.\nClick the Save button to bookmark the current diagram and restore it later.'
+      ? '暂无自动历史。\n每分钟自动保存一次，最多保留 30 条。'
+      : '暂无收藏。\n点击保存按钮，收藏当前图表。'
   );
-
-  const tabSelectHandler = (tab: Tab) => {
-    setMode(tab.id as HistoryType);
-  };
 
   const downloadHistory = () => {
     const data = historyState.entries;
@@ -80,7 +58,6 @@
     a.download = `mermaid-history-${dayjs().format('YYYY-MM-DD-HHmmss')}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    logEvent('history', { action: 'download' });
   };
 
   const uploadHistory = () => {
@@ -92,26 +69,31 @@
       if (!file) {
         return;
       }
-      const data: HistoryEntry[] = JSON.parse(await file.text());
-      const { restored, invalid, duplicates } = restoreEntries(data);
-      notify(`${restored} restored, ${duplicates} duplicate, ${invalid} invalid.`);
+      try {
+        const data: unknown = JSON.parse(await file.text());
+        const { restored, invalid, duplicates } = restoreEntries(data);
+        notify(`已恢复 ${restored} 条，重复 ${duplicates} 条，无效 ${invalid} 条`);
+      } catch {
+        notify('无法读取历史备份，请选择有效的 JSON 文件');
+      }
     });
     input.click();
   };
 
   const saveHistory = () => {
     if (!addManualEntry($state.snapshot(inputState))) {
-      notify('State already saved.');
+      notify('当前图表已收藏');
     }
   };
 
   const clearAll = () => {
-    if (prompt('Clear all saved items?')) {
+    if (prompt('确定清空当前列表？')) {
       clearActive();
     }
   };
 
   const restoreHistoryItem = (state: State): void => {
+    addAutoEntry($state.snapshot(inputState));
     replaceInputState({ ...state, updateDiagram: true });
   };
 
@@ -125,22 +107,36 @@
   );
 </script>
 
-<Card onselect={tabSelectHandler} isOpen isClosable={false} {tabs} activeTabID={historyState.mode}>
-  {#snippet actions()}
+<div class="flex h-full min-h-0 flex-col">
+  <div role="tablist" aria-label="历史分类" class="flex shrink-0 gap-1 border-b px-3 py-2">
+    <button
+      role="tab"
+      aria-selected={historyState.mode === 'manual'}
+      class="editor-tab rounded-md px-3 py-1.5 text-xs"
+      class:active={historyState.mode === 'manual'}
+      onclick={() => setMode('manual')}><BookmarkIcon class="mr-1 inline size-3.5" />收藏</button>
+    <button
+      role="tab"
+      aria-selected={historyState.mode === 'auto'}
+      class="editor-tab rounded-md px-3 py-1.5 text-xs"
+      class:active={historyState.mode === 'auto'}
+      onclick={() => setMode('auto')}><HistoryIcon class="mr-1 inline size-3.5" />时间线</button>
+  </div>
+  <div class="shrink-0 border-b px-3 py-2">
     <div class="flex items-center gap-2">
       <Button
         size="icon"
         variant="ghost"
         id="uploadHistory"
         onclick={uploadHistory}
-        title="Upload history"><UploadIcon /></Button>
+        title="导入历史备份"><UploadIcon /></Button>
       {#if historyState.entries.length > 0}
         <Button
           id="downloadHistory"
           size="icon"
           variant="ghost"
           onclick={downloadHistory}
-          title="Download history"><DownloadIcon /></Button>
+          title="导出历史备份"><DownloadIcon /></Button>
       {/if}
       <Separator orientation="vertical" />
       <Button
@@ -148,59 +144,50 @@
         size="icon"
         variant="ghost"
         onclick={saveHistory}
-        title="Save current state"><SaveIcon /></Button>
-      {#if historyState.mode !== 'loader'}
-        <Button
-          id="clearHistory"
-          size="icon"
-          variant="ghost"
-          class="hover:text-destructive"
-          onclick={clearAll}
-          title="Delete all saved states"><TrashAltIcon /></Button>
-      {/if}
+        title="收藏当前图表"><SaveIcon /></Button>
+
+      <Button
+        id="clearHistory"
+        size="icon"
+        variant="ghost"
+        class="hover:text-destructive"
+        onclick={clearAll}
+        title="清空当前列表"><TrashAltIcon /></Button>
     </div>
-  {/snippet}
-  <ul class="flex h-full flex-col gap-2 overflow-auto p-2" id="historyList">
+  </div>
+  <ul class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-4" id="historyList">
     {#if entriesWithUrl.length > 0}
-      {#each entriesWithUrl as { id, state, time, name, url, type, openUrl } (id)}
+      {#each entriesWithUrl as { id, state, time, name, openUrl } (id)}
         <li class="flex flex-col gap-2">
           <div class="flex items-center justify-between">
             <div class="flex min-w-0 flex-1 flex-col">
               <div class="flex min-w-0 items-center gap-1 overflow-hidden">
-                {#if url}
-                  <a
-                    href={url}
-                    target="_blank"
-                    rel="noopener"
-                    title="Open revision in new tab"
-                    class="min-w-0 truncate text-blue-500 hover:underline">{name}</a>
-                {:else if editingId === id}
+                {#if editingId === id}
                   <input
                     class="min-w-0 flex-1 rounded border px-1 text-sm"
                     bind:value={editValue}
-                    aria-label="Rename entry"
+                    aria-label="重命名记录"
                     onkeydown={(event) => {
                       if (event.key === 'Enter') {
-                        commitRename();
+                        commit重命名();
                       } else if (event.key === 'Escape') {
                         editingId = null;
                       }
                     }}
-                    onblur={commitRename} />
+                    onblur={commit重命名} />
                 {:else}
                   <span class="min-w-0 truncate" title={name}>{name}</span>
-                  {#if type !== 'loader'}
-                    <button
-                      type="button"
-                      class="shrink-0 opacity-50 hover:opacity-100"
-                      title="Rename"
-                      onclick={() => {
-                        editingId = id;
-                        editValue = name ?? '';
-                      }}>
-                      <EditIcon class="size-3.5" />
-                    </button>
-                  {/if}
+
+                  <button
+                    type="button"
+                    class="shrink-0 opacity-50 hover:opacity-100"
+                    title="重命名"
+                    onclick={() => {
+                      editingId = id;
+                      editValue = name ?? '';
+                    }}>
+                    <EditIcon class="size-3.5" />
+                  </button>
                 {/if}
               </div>
               <span class="text-xs whitespace-nowrap text-primary-foreground/30">
@@ -218,33 +205,34 @@
                 rel="noopener"
                 size="icon"
                 variant="ghost"
-                title="Open in new tab">
+                title="在新标签页打开">
                 <OpenInNewIcon />
               </Button>
               <Button
                 size="icon"
                 variant="ghost"
-                title="Restore this version"
+                title="恢复此版本"
                 onclick={() => restoreHistoryItem(state)}>
                 <UndoIcon />
               </Button>
-              {#if type !== 'loader'}
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  class="hover:text-destructive"
-                  title="Delete this version"
-                  onclick={() => removeEntry(id)}>
-                  <TrashAltIcon />
-                </Button>
-              {/if}
+
+              <Button
+                size="icon"
+                variant="ghost"
+                class="hover:text-destructive"
+                title="删除此版本"
+                onclick={() => removeEntry(id)}>
+                <TrashAltIcon />
+              </Button>
             </div>
           </div>
           <Separator />
         </li>
       {/each}
     {:else}
-      <div class="m-2 text-center whitespace-pre-line">{emptyMessage}</div>
+      <li class="px-2 py-8 text-center text-xs leading-6 whitespace-pre-line text-muted-foreground">
+        {emptyMessage}
+      </li>
     {/if}
   </ul>
-</Card>
+</div>

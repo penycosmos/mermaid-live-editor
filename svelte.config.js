@@ -8,6 +8,21 @@ const config = {
   // for more information about preprocessors
   preprocess: [sveltePreprocess({})],
   kit: {
+    csp: {
+      directives: {
+        'default-src': ['self'],
+        'script-src': ['self', 'wasm-unsafe-eval'],
+        'style-src': ['self', 'unsafe-inline'],
+        'img-src': ['self', 'data:', 'blob:'],
+        'font-src': ['self', 'data:'],
+        'connect-src': ['self'],
+        'worker-src': ['self', 'blob:'],
+        'frame-src': ['self'],
+        'object-src': ['none'],
+        'base-uri': ['self'],
+        'form-action': ['none']
+      }
+    },
     alias: {
       '$/*': './src/lib/*'
     },

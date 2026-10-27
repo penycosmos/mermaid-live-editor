@@ -1,6 +1,7 @@
 import { get as lodashGet } from 'lodash-es';
-import type { MermaidConfig } from 'mermaid';
-import { defaultMermaidConfig } from './mermaid';
+import mermaid, { type MermaidConfig } from 'mermaid';
+
+const defaultMermaidConfig = mermaid.mermaidAPI.defaultConfig ?? {};
 
 /**
  * Gets a list of paths that contain unsafe keys which might pose security risks.
@@ -71,9 +72,8 @@ export const stripConfigPaths = (config: MermaidConfig, paths: string[][]): void
 };
 
 /**
- * Non-interactive variant of `sanitizeConfig`: always strips unsafe settings
- * without asking the user. Used where a blocking confirm dialog is not an
- * option, such as the public /embed widget.
+ * Returns a sanitized render copy without mutating the saved configuration.
+ * Shared by the editor, embed resolver and export settings.
  *
  * @param config - The Mermaid configuration (JSON string or object).
  * @returns The sanitized Mermaid configuration object.
@@ -89,8 +89,10 @@ export const silentlySanitizeConfig = (
       parsed = {};
     }
   } else if (config) {
-    parsed = config;
+    // Config can be a Svelte proxy; JSON is its persisted/public representation.
+    parsed = JSON.parse(JSON.stringify(config)) as MermaidConfig;
   }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
   stripConfigPaths(parsed, findUnsafeConfigPaths(parsed));
   return parsed;
 };

@@ -4,7 +4,7 @@
   import { PanZoomState } from '$/util/panZoom';
   import { renderAndPlaceDiagram } from '$/util/renderView';
   import { updateCodeStore, validatedState } from '$/util/state.svelte';
-  import { saveStatistics } from '$/util/stats';
+
   import FontAwesome, { mayContainFontAwesome } from '$lib/components/FontAwesome.svelte';
   import uniqueID from 'lodash-es/uniqueId';
   import type { MermaidConfig } from 'mermaid';
@@ -47,7 +47,6 @@
       return;
     }
     error = false;
-    let diagramType: string | undefined;
     try {
       if (container) {
         manualUpdate = true;
@@ -75,14 +74,13 @@
         }
 
         const scroll = view?.parentElement?.scrollTop;
-        const { diagramType: detectedDiagramType, graphDiv } = await renderAndPlaceDiagram({
+        const { graphDiv } = await renderAndPlaceDiagram({
           code,
           config: JSON.parse(state.mermaid) as MermaidConfig,
           container,
           rough: state.rough,
           viewId: uniqueID('graph-')
         });
-        diagramType = detectedDiagramType;
         if (graphDiv && state.panZoom) {
           handlePanZoom(state, graphDiv);
         }
@@ -98,7 +96,6 @@
       error = true;
     }
     const renderTime = Date.now() - startTime;
-    saveStatistics({ code, diagramType, isRough: state.rough, renderTime });
     recordRenderTime(renderTime, () => {
       updateCodeStore({ updateDiagram: true });
     });

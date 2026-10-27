@@ -16,12 +16,7 @@ export class PanZoomState {
 
   constructor() {
     this.isPanEnabled = true;
-    this.resizeObserver = new ResizeObserver(() => {
-      this.resize();
-      if (!this.isDirty) {
-        this.reset();
-      }
-    });
+    this.resizeObserver = new ResizeObserver(() => this.resize());
   }
 
   public updateElement(diagramView: SVGElement, { pan, zoom }: Pick<State, 'pan' | 'zoom'>) {
@@ -134,9 +129,20 @@ export class PanZoomState {
   }
 
   public resize() {
-    this.pzoom?.resize();
+    if (!this.pzoom) return;
+    const previous = this.pzoom.getSizes();
+    this.pzoom.resize();
     if (!this.isDirty) {
       this.reset();
+    } else {
+      const current = this.pzoom.getSizes();
+      if (current.width !== previous.width || current.height !== previous.height) {
+        // Preserve the user's zoom and center when a sidebar changes the viewport.
+        this.pzoom.panBy({
+          x: (current.width - previous.width) / 2,
+          y: (current.height - previous.height) / 2
+        });
+      }
     }
   }
 

@@ -1,68 +1,29 @@
-# CLAUDE.md
+# 项目约定
 
-## Commands
+## 运行与验证
 
-Uses pnpm (install via `corepack enable pnpm`). Node >= 24 required.
+Node ≥ 24.16.0，pnpm 10.34.7。
 
-- `pnpm dev` — dev server on http://localhost:3000
-- `pnpm build` — production build (static site, output to `docs/`)
-- `pnpm check` — svelte-check type checking
-- `pnpm lint` / `pnpm lint:fix` — prettier + eslint
-- `pnpm test:unit` — vitest in watch mode; `pnpm vitest run` for a single pass
-- Single unit test: `pnpm vitest run src/lib/util/serde.test.ts` (or `-t "test name"`)
-- `pnpm test:e2e` — Playwright tests in `tests/`; auto-starts the dev server on port 3000 (reuses one already running). `pnpm test:e2e:ui` / `:debug` for interactive runs
-- `pnpm test` — unit + e2e
+- `pnpm dev`：本地开发，端口 3000。
+- `pnpm check`：Svelte/TypeScript 检查。
+- `pnpm lint`：Prettier 与 ESLint 检查。
+- `pnpm vitest run --dir src`：执行一次单元测试。
+- `pnpm build`：构建静态站点到 `docs/`，该目录不是源码。
+- `pnpm test:e2e`：Playwright；生产回归先构建，再用 `CI=true pnpm test:e2e`。
+- 开发热更新刻意采用整页刷新，避免编辑器与状态不一致。
 
-Gotchas:
+## 应用边界
 
-- If `.claude/worktrees/` contains repo copies, vitest picks up their test files too — scope with `pnpm vitest run --dir src`.
-- Local Playwright runs can be flaky under parallel workers; retry or use `--workers=1` before assuming a real failure.
-- CI runs lint, check, unit tests, and Playwright (against a production build) on PRs to master.
+这是中文、本地运行、画布优先的离线编辑器。不要重新加入外部服务、统计、推广、在线 Schema 或网络字体。运行时网络资源只能来自当前应用同源；不要删除 SVG 的 XML 命名空间或依赖许可证。
 
-## Architecture
+- `/edit` 是画布工作台；代码、模板、历史使用互斥的可收起侧栏。
+- `/view` 使用主编辑器状态；`/embed` 是独立的 props 驱动渲染，不得导入编辑器状态单例或读写编辑器 localStorage。
+- `state.svelte.ts` 是状态边界，写入必须使用已有更新函数，流程为持久化 → 校验 → 发布 `validatedState` → 渲染与 URL hash 同步。
+- `State` 用于保存和分享，`ValidatedState` 只用于应用内部。旧 localStorage 与 pako/Base64 链接必须继续可读。
+- `mermaid.ts` 固定渲染安全配置，`offline.ts` 清理渲染副本；不得改写用户源码来消除外联。
+- `exportSvg.ts` 负责自包含 SVG 和手绘标签裁切修复。导出改动必须验证实际图片，包括中文、多行、图标及尺寸模式，不能只检查下载成功。
+- `.mmd` 只保存源码，完整配置保存在历史备份中。替换图表前使用现有历史保存功能。
 
-SvelteKit 2 + Svelte 5 (runes) SPA using `@sveltejs/adapter-static`. **`docs/` is build output** (GitHub Pages convention) — never edit it. Routes: `/` (redirects), `/edit` (main editor), `/view` (read-only viewer).
+## 实现习惯
 
-### State flow (the core of the app)
-
-`src/lib/util/state.svelte.ts` is the single source of truth:
-
-- `inputState` — a `$state` rune holding `State` (code, mermaid config JSON, pan/zoom, etc.), initialized from localStorage key `codeStore`. **All writes must go through the exported update functions** (`updateCode`, `updateCodeStore`, `updateConfig`, `replaceInputState`, ...), which call `persistAndProcess()`: persist to localStorage → async re-validate via `mermaid.parse` → publish to `validatedState`. Reads inside update functions are wrapped in `untrack` so calling effects don't depend on the whole input state.
-- `validatedState` — read-only validated snapshot (adds `error`, `errorMarkers`, `serialized`, `diagramType`). Internal reads should use this, but it is never persisted or shared externally.
-- The diagram `theme` in the config is editor-managed: after every validation and on site light/dark changes, `syncManagedTheme` sets it to the diagram type's mermaid default (its config section's `theme`, e.g. `redux-color` for flowcharts) or the redux `-dark` variant / `dark` in dark mode. A theme outside that family (`isManagedTheme` in `mermaid.ts`) is the user's choice and is never touched. The default config is therefore `{}` until the first validation fills the theme in.
-- The serialized state is mirrored into the URL hash (debounced) — the URL **is** the sharing mechanism. `src/lib/util/serde.ts` encodes state as `pako:<base64 deflate>` (legacy plain-base64 supported). `mermaid.ink` PNG/SVG links, Kroki, and Mermaid Chart URLs are derived from it in `urls`.
-- App startup goes through `initHandler()` in `src/lib/util/util.ts`: migrations → load state from URL hash → optional gist/URL loading (`fileLoaders/`) → start URL-hash subscription → analytics.
-
-### Persistence
-
-`src/lib/util/persist.svelte.ts` provides `readJSON`/`writeJSON` and a `persisted()` localStorage-backed rune, shared by state, migrations (`migrations.svelte.ts`), promos, and History. History (`src/lib/components/History/historyState.svelte.ts`) auto-saves a timeline of diagrams for the whole session (`startAutoSave()` in the edit page).
-
-### Rendering
-
-`src/lib/util/mermaid.ts` wraps mermaid and registers the tidy-tree layout engine plus ZenUML at module load (ELK is bundled with mermaid 12). `View.svelte` renders the diagram; `panZoom.ts` wraps svg-pan-zoom; "rough" hand-drawn mode uses svg2roughjs. Sample diagrams come from `@mermaid-js/examples`.
-
-### Editors
-
-Two editor implementations behind `Editor.svelte`: Monaco for desktop (`DesktopEditor.svelte`; custom mermaid language, completions, and error markers in `monacoExtra.ts`) and CodeMirror for mobile (`MobileEditor.svelte`). Both edit either the diagram code or the mermaid config JSON depending on `editorMode`.
-
-### Security
-
-States loaded from URLs pass through `sanitizeConfig` (state.svelte.ts), which detects unsafe mermaid config (XSS vectors, prototype pollution, `secure` keys) and asks the user before stripping it. Keep this in mind when touching anything that deserializes external state.
-
-### UI / styling
-
-- shadcn-svelte components live in `src/lib/components/ui/` (bits-ui based, registry config in `components.json`) — treat as vendored; several lint rules are disabled there.
-- Tailwind CSS 4 (via `@tailwindcss/vite`).
-- Icons via unplugin-icons: `import X from '~icons/material-symbols/...'`; custom icons load from `static/icons` under `~icons/custom/*`.
-- Path alias: `$/*` → `src/lib/*` (in addition to SvelteKit's `$lib`).
-
-### Environment / build quirks
-
-- Env vars use the `MERMAID_` prefix (`import.meta.env`), read in `src/lib/util/env.ts`. Defaults in `.env`; copy to `.env.local` for local overrides. These control renderer URL (mermaid.ink), Kroki, analytics, and Mermaid Chart integration.
-- HMR is deliberately disabled — every change triggers a full page reload (see `alwaysFullReload` in `vite.config.js`) because HMR corrupts app state.
-- `vite.config.js` pins monaco/mermaid/codemirror into named vendor chunks for long-term caching — keep that intact when touching build config.
-
-## Conventions
-
-- ESLint enforces alphabetically sorted object keys in `src/` for objects with 5+ keys (`sort-keys/sort-keys-fix`), plus typescript-eslint strict and unicorn rules.
-- Unit tests are colocated with source (`*.test.ts` in `src/`); vitest runs with jsdom and also supports in-source tests (`import.meta.vitest`). Playwright e2e specs live in `tests/` and use `data-testid` constants from `src/lib/constants.ts` (`TID`).
+复用 `src/lib/components/ui/` 的现有组件，不增加无必要的依赖或架构层。单元测试与源码放在一起；页面测试在 `tests/`。图标按钮必须有中文可访问名称，侧栏与画布都要保留可用的独立滚动区域。

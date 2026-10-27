@@ -3,6 +3,7 @@ import tidyTreeLayouts from '@mermaid-js/layout-tidy-tree';
 import zenuml from '@mermaid-js/mermaid-zenuml';
 import type { MermaidConfig, RenderResult } from 'mermaid';
 import mermaid from 'mermaid';
+import { silentlySanitizeConfig } from './sanitize';
 
 // ELK ships bundled with mermaid 12 and is registered automatically.
 mermaid.registerLayoutLoaders(tidyTreeLayouts);
@@ -16,7 +17,12 @@ export const render = async (
   await init;
 
   // Should be able to call this multiple times without any issues.
-  mermaid.initialize(config);
+  mermaid.initialize({
+    ...silentlySanitizeConfig(config),
+    dompurifyConfig: undefined,
+    secure: [...(defaultMermaidConfig.secure ?? []), 'dompurifyConfig'],
+    securityLevel: 'strict'
+  });
   return await mermaid.render(id, code);
 };
 

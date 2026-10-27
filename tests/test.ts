@@ -1,15 +1,13 @@
-import { C, TID } from '$/constants';
+import { TID } from '$/constants';
 import { test as base, expect, type Locator, type Page } from '@playwright/test';
 import { verifyFileSizeGreaterThan, type EditorOptions } from './utils';
 
 export class EditorPage {
   readonly editor: Locator;
-  readonly markdownInput: Locator;
   readonly view: Locator;
 
   constructor(readonly page: Page) {
     this.editor = page.locator('css=.monaco-editor');
-    this.markdownInput = page.getByTestId(TID.copyMarkdown);
     this.view = page.locator('#view');
   }
 
@@ -21,7 +19,13 @@ export class EditorPage {
       .catch(() => {});
   }
 
+  async openCode() {
+    const button = this.page.getByRole('button', { name: '代码编辑', exact: true });
+    if ((await button.getAttribute('aria-pressed')) !== 'true') await button.click();
+  }
+
   async typeInEditor(text: string, { bottom = true, newline = false }: EditorOptions = {}) {
+    await this.openCode();
     await this.editor.click();
     if (bottom) {
       await this.page.keyboard.press('PageDown');
@@ -33,17 +37,19 @@ export class EditorPage {
   }
 
   async clearEditor() {
+    await this.openCode();
     await this.editor.click();
     await this.page.keyboard.press('Control+KeyA');
     await this.page.keyboard.press('Backspace');
   }
 
   async toggleActions() {
-    await this.page.getByText('Actions', { exact: true }).click();
+    await this.page.getByRole('button', { name: '导出', exact: true }).click();
   }
 
   async toggleSampleDiagrams() {
-    await this.page.getByText('Sample Diagrams', { exact: true }).click();
+    await this.page.keyboard.press('Escape');
+    await this.page.getByRole('button', { name: '图表模板', exact: true }).click();
   }
 
   async checkAndDownloadPNG(expectedSize: number) {
@@ -59,7 +65,10 @@ export class EditorPage {
   }
 
   async loadSampleDiagram(diagramName: string) {
-    await this.page.getByText(diagramName, { exact: true }).click();
+    await this.page.keyboard.press('Escape');
+    const button = this.page.getByRole('button', { name: '图表模板', exact: true });
+    if ((await button.getAttribute('aria-pressed')) !== 'true') await button.click();
+    await this.page.locator(`button[title="${diagramName}"]`).click();
   }
 
   async checkTextInView(text: string) {
@@ -77,23 +86,19 @@ export class EditorPage {
   }
 
   async checkInEditor(text: string) {
+    await this.openCode();
     await expect(this.editor).toContainText(text);
   }
 
   async toggleComment(text: string) {
+    await this.openCode();
     await this.editor.getByText(text).click();
     await this.page.keyboard.press('Control+/');
   }
 
   async setEditorMode(mode: 'Code' | 'Config') {
-    await this.page.getByRole('tab').getByText(mode).click();
-  }
-
-  async checkDocURL(url: string | RegExp) {
-    await expect(this.page.getByTestId(TID.diagramDocumentationButton)).toHaveAttribute(
-      'href',
-      url
-    );
+    await this.openCode();
+    await this.page.getByRole('tab', { name: mode === 'Code' ? '图表代码' : '渲染配置' }).click();
   }
 
   async toggleTheme() {
@@ -103,27 +108,16 @@ export class EditorPage {
   async checkTheme(theme: 'light' | 'dark') {
     await expect(this.page.getByTestId(TID.themeToggleButton)).toHaveAttribute(
       'title',
-      `Switch to ${theme === 'light' ? 'dark' : 'light'} theme`
+      `切换为${theme === 'light' ? '深色' : '浅色'}主题`
     );
-  }
-
-  async checkAIHelperVisibility(shouldBeVisible: boolean) {
-    const button = this.page.getByTestId(TID.aiRepairButton);
-    const helpText = this.page.getByTestId(TID.aiHelpText);
-    await expect(button)[shouldBeVisible ? 'toBeVisible' : 'toBeHidden']();
-    await expect(helpText)[shouldBeVisible ? 'toBeVisible' : 'toBeHidden']();
   }
 }
 
 export const test = base.extend<{ editPage: EditorPage }>({
   editPage: async ({ page }, use) => {
-    // Dismiss the editor chooser modal so it doesn't block interactions
-    await page.addInitScript((key) => {
-      window.localStorage.setItem(key, 'true');
-    }, C.editorChooserDismissedKey);
     const editorPage = new EditorPage(page);
     await editorPage.start();
-    await editorPage.toggleSampleDiagrams();
+    await editorPage.openCode();
     await use(editorPage);
   }
 });

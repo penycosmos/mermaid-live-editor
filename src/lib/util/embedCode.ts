@@ -32,7 +32,7 @@ export interface EmbedUrlOptions {
   controls?: boolean;
   /** Draw the dotted background. Default true. */
   grid?: boolean;
-  /** Origin (plus base path) that hosts the widget, e.g. https://mermaid.live. Required. */
+  /** Origin (plus base path) that hosts the widget, e.g. http://localhost:3000. Required. */
   host: string;
   /** Mermaid look: classic | handDrawn | neo. */
   look?: string;

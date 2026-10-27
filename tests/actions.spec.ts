@@ -8,7 +8,11 @@ const missingTextPixels = (page: Page, png?: string) =>
   page.evaluate(async (png) => {
     const svgSource = document.documentElement.dataset.exportSvg;
     if (!svgSource) throw new Error('Exported SVG was not captured');
-    const svgText = await (await fetch(svgSource)).text();
+    const svgText = new TextDecoder().decode(
+      Uint8Array.from(atob(svgSource.slice(svgSource.indexOf(',') + 1)), (char) =>
+        char.charCodeAt(0)
+      )
+    );
     const svg = new DOMParser().parseFromString(svgText, 'image/svg+xml').documentElement;
     const loadImage = (source: string) =>
       new Promise<HTMLImageElement>((resolve, reject) => {
@@ -79,20 +83,6 @@ test.describe('Check actions', () => {
     await editPage.toggleActions();
   });
 
-  test('should update markdown code', async ({ editPage }) => {
-    const oldText = await editPage.markdownInput.inputValue();
-    await editPage.typeInEditor('C --> HistoryTest', { bottom: true, newline: true });
-    await expect(editPage.markdownInput).not.toHaveValue(oldText);
-  });
-
-  test.skip('should load gists from URL', async ({ page }) => {
-    await page
-      .locator('#gist')
-      .fill('https://gist.github.com/sidharthv96/6268a23e673a533dcb198f241fd7012a');
-    await page.getByText('Load Gist').click();
-    await expect(page.getByText('Go shopping!!')).toBeVisible();
-  });
-
   test('should download png and svg', async ({ editPage }) => {
     const firstPngSize = await editPage.checkAndDownloadPNG(20_000);
     const firstSvgSize = await editPage.downloadSVG(10_000);
@@ -101,6 +91,7 @@ test.describe('Check actions', () => {
     await editPage.toggleSampleDiagrams();
     await editPage.loadSampleDiagram('Entity Relationship');
 
+    await editPage.toggleActions();
     const secondPngSize = await editPage.checkAndDownloadPNG(20_000);
     const secondSvgSize = await editPage.downloadSVG(10_000);
 
@@ -141,7 +132,9 @@ for (const [label, format, sizeMode, rough] of [
       new XMLSerializer().serializeToString(element)
     );
     if (sizeMode !== 'Auto') {
-      await page.getByRole('radio', { name: sizeMode, exact: true }).click();
+      await page
+        .getByRole('radio', { name: sizeMode === 'Width' ? '指定宽度' : '指定高度', exact: true })
+        .click();
       await page.getByRole('spinbutton').fill('256');
     }
     await page.evaluate((copy) => {
@@ -171,7 +164,7 @@ for (const [label, format, sizeMode, rough] of [
     }, format === 'Copy Image');
     let png: string | undefined;
     if (format === 'Copy Image') {
-      await page.getByRole('button', { name: format, exact: true }).click();
+      await page.getByRole('button', { name: '复制图片', exact: true }).click();
       await expect(page.locator('html')).toHaveAttribute('data-clipboard-png', /^data:image\/png/);
       png = await page.evaluate(() => document.documentElement.dataset.clipboardPng);
     } else {
@@ -192,7 +185,9 @@ for (const [label, format, sizeMode, rough] of [
       const exportedMarkup = await page.evaluate(async () => {
         const source = document.documentElement.dataset.exportSvg;
         if (!source) throw new Error('Exported SVG was not captured');
-        const svgText = await (await fetch(source)).text();
+        const svgText = new TextDecoder().decode(
+          Uint8Array.from(atob(source.slice(source.indexOf(',') + 1)), (char) => char.charCodeAt(0))
+        );
         const label = new DOMParser()
           .parseFromString(svgText, 'image/svg+xml')
           .querySelector('foreignObject');

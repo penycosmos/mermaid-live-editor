@@ -1,6 +1,7 @@
 import type { MermaidConfig } from 'mermaid';
 import { Svg2Roughjs } from 'svg2roughjs';
 import { render as renderDiagram } from './mermaid';
+import { keepDiagramLocal } from './offline';
 
 export interface PlacedDiagram {
   diagramType?: string;
@@ -35,7 +36,12 @@ export const renderAndPlaceDiagram = async ({
   if (svg.length === 0) {
     return { diagramType };
   }
-  container.innerHTML = svg;
+  const template = document.createElement('template');
+  template.innerHTML = svg;
+  const safeSvg = template.content.querySelector('svg');
+  if (!safeSvg) throw new Error('SVG not found');
+  keepDiagramLocal(safeSvg);
+  container.replaceChildren(safeSvg);
   let graphDiv = document.querySelector<SVGSVGElement>(`#${viewId}`);
   if (!graphDiv) {
     throw new Error('graph-div not found');

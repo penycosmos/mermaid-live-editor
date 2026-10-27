@@ -26,9 +26,6 @@ importers:
       '@codemirror/view':
         specifier: ^6.43.14
         version: 6.43.14
-      '@fontsource-variable/recursive':
-        specifier: ^5.2.8
-        version: 5.2.8
       '@fsegurai/codemirror-theme-vscode-dark':
         specifier: ^6.2.8
         version: 6.2.8(@codemirror/language@6.12.4)(@codemirror/state@6.7.6)(@codemirror/view@6.43.14)(@lezer/highlight@1.2.3)
@@ -71,12 +68,6 @@ importers:
       pako:
         specifier: 2.1.0
         version: 2.1.0
-      plausible-tracker:
-        specifier: ^0.3.9
-        version: 0.3.9
-      random-word-slugs:
-        specifier: 0.1.7
-        version: 0.1.7
       svg-pan-zoom:
         specifier: 3.6.2
         version: 3.6.2
@@ -99,12 +90,6 @@ importers:
       '@fortawesome/fontawesome-free':
         specifier: ^7.2.0
         version: 7.2.0
-      '@iconify-json/hugeicons':
-        specifier: ^1.2.35
-        version: 1.2.35
-      '@iconify-json/logos':
-        specifier: ^1.2.17
-        version: 1.2.17
       '@iconify-json/material-symbols':
         specifier: ^1.2.95
         version: 1.2.95
@@ -518,9 +503,6 @@ packages:
   '@floating-ui/utils@0.2.11':
     resolution: {integrity: sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg==}
 
-  '@fontsource-variable/recursive@5.2.8':
-    resolution: {integrity: sha512-LEq6XtuWtjmNTRFQEctx+RUPiQegsjOaCF++ASVoMoGEW4gNjbaKZJJo/NiR12eWxT4LaTKonTgrmEci0oVcSw==}
-
   '@fortawesome/fontawesome-free@7.2.0':
     resolution: {integrity: sha512-3DguDv/oUE+7vjMeTSOjCSG+KeawgVQOHrKRnvUuqYh1mfArrh7s+s8hXW3e4RerBA1+Wh+hBqf8sJNpqNrBWg==}
     engines: {node: '>=6'}
@@ -573,12 +555,6 @@ packages:
   '@humanwhocodes/retry@0.4.3':
     resolution: {integrity: sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ==}
     engines: {node: '>=18.18'}
-
-  '@iconify-json/hugeicons@1.2.35':
-    resolution: {integrity: sha512-c06tY90JZnKhOLBAKoQ1z2pqXMRdATuYXslTKwaaIAjLzKsTIsE+GGknY6+qo/SP0U/NG9xQjr4N+zfDqOeQiQ==}
-
-  '@iconify-json/logos@1.2.17':
-    resolution: {integrity: sha512-ruCr6y5h8FW+loXwRJkz+6cJj3njyX5Ccpi+ifMgaWZPbTSCbsCccNyGomZxIdhoyDKNOmNdZuURC3tyBvDr7A==}
 
   '@iconify-json/material-symbols@1.2.95':
     resolution: {integrity: sha512-n34GNbwe8We3LPXK2N8JuQewEQkITJiRsmX/0UYJsOyKzviVl22mNfLUiGGtXLKDPqxZa17q1Hg57zdA3BYa0w==}
@@ -2821,11 +2797,6 @@ packages:
   pkg-types@2.3.1:
     resolution: {integrity: sha512-y+ichcgc2LrADuhLNAx8DFjVfgz91pRxfZdI3UDhxHvcVEZsenLO+7XaU5vOp0u/7V/wZ+plyuQxtrDlZJ+yeg==}
 
-  plausible-tracker@0.3.9:
-    resolution: {integrity: sha512-hMhneYm3GCPyQon88SZrVJx+LlqhM1kZFQbuAgXPoh/Az2YvO1B6bitT9qlhpiTdJlsT5lsr3gPmzoVjb5CDXA==}
-    engines: {node: '>=10'}
-    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
-
   playwright-core@1.60.0:
     resolution: {integrity: sha512-9bW6zvX/m0lEbgTKJ6YppOKx8H3VOPBMOCFh2irXFOT4BbHgrx5hPjwJYLT40Lu+4qtD36qKc/Hn56StUW57IA==}
     engines: {node: '>=18'}
@@ -3189,9 +3160,6 @@ packages:
 
   quick-format-unescaped@4.0.4:
     resolution: {integrity: sha512-tYC1Q1hgyRuHgloV/YXs2w15unPVh8qfu/qCTfhTYamaw7fyhumKa2yGpdSo87vY32rIclj+4fWYQXUMs9EHvg==}
-
-  random-word-slugs@0.1.7:
-    resolution: {integrity: sha512-8cyzxOIDeLFvwSPTgCItMXHGT5ZPkjhuFKUTww06Xg1dNMXuGxIKlARvS7upk6JXIm41ZKXmtlKR1iCRWklKmg==}
 
   react-aria@3.49.0:
     resolution: {integrity: sha512-4+oK9FwJQWYhyA5zLfj/feOGY0zZbkE1muoF4gyxMroHVypjcYaRSTlJwvxph2zIlxt757KX6xIK2wJ5Aw1Kog==}
@@ -4235,8 +4203,6 @@ snapshots:
 
   '@floating-ui/utils@0.2.11': {}
 
-  '@fontsource-variable/recursive@5.2.8': {}
-
   '@fortawesome/fontawesome-free@7.2.0': {}
 
   '@fsegurai/codemirror-theme-vscode-dark@6.2.8(@codemirror/language@6.12.4)(@codemirror/state@6.7.6)(@codemirror/view@6.43.14)(@lezer/highlight@1.2.3)':
@@ -4282,14 +4248,6 @@ snapshots:
   '@humanwhocodes/module-importer@1.0.1': {}
 
   '@humanwhocodes/retry@0.4.3': {}
-
-  '@iconify-json/hugeicons@1.2.35':
-    dependencies:
-      '@iconify/types': 2.0.0
-
-  '@iconify-json/logos@1.2.17':
-    dependencies:
-      '@iconify/types': 2.0.0
 
   '@iconify-json/material-symbols@1.2.95':
     dependencies:
@@ -6518,8 +6476,6 @@ snapshots:
       exsolve: 1.0.8
       pathe: 2.0.3
 
-  plausible-tracker@0.3.9: {}
-
   playwright-core@1.60.0: {}
 
   playwright@1.60.0:
@@ -6793,8 +6749,6 @@ snapshots:
   queue-microtask@1.2.3: {}
 
   quick-format-unescaped@4.0.4: {}
-
-  random-word-slugs@0.1.7: {}
 
   react-aria@3.49.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7):
     dependencies:

@@ -41,6 +41,13 @@ describe('stripConfigPaths', () => {
 });
 
 describe('silentlySanitizeConfig', () => {
+  it('does not mutate caller config or accept scalar JSON configs', () => {
+    const input = { securityLevel: 'loose' as const, theme: 'forest' as const };
+    expect(silentlySanitizeConfig(input)).toEqual({ theme: 'forest' });
+    expect(input.securityLevel).toBe('loose');
+    for (const json of ['null', '[]', '3', '"text"'])
+      expect(silentlySanitizeConfig(json)).toEqual({});
+  });
   it('should parse a JSON string and strip unsafe settings', () => {
     const result = silentlySanitizeConfig(
       JSON.stringify({ securityLevel: 'loose', theme: 'dark' })

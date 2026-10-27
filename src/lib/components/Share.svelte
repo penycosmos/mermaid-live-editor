@@ -12,6 +12,7 @@
   import { validatedState } from '$/util/state.svelte';
   import { copyToClipboard } from '$/util/util';
   import { asset, base } from '$app/paths';
+  import { Link2 } from 'lucide-svelte';
   import CodeIcon from '~icons/material-symbols/code';
   import ShareIcon from '~icons/material-symbols/share';
   import CopyButton from './CopyButton.svelte';
@@ -52,38 +53,37 @@
 </script>
 
 <Dialog.Root>
-  <Dialog.Trigger class={buttonVariants({ size: 'sm' })}>Share</Dialog.Trigger>
+  <Dialog.Trigger
+    class={buttonVariants({ variant: 'ghost', size: 'icon' })}
+    title="本地链接与嵌入"
+    aria-label="本地链接与嵌入"><Link2 /></Dialog.Trigger>
   <Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-xl">
     <Dialog.Header>
       <Dialog.Title class="flex items-center gap-2 text-xl">
-        <ShareIcon class="size-5" /> Shareable links
+        <ShareIcon class="size-5" /> 本地链接与嵌入
       </Dialog.Title>
-      <Dialog.Description>Share your diagrams with others.</Dialog.Description>
+      <Dialog.Description>链接和嵌入仅适用于当前本地服务。</Dialog.Description>
     </Dialog.Header>
 
     <div class="flex flex-col gap-4">
       <div class="flex flex-col gap-2">
         <h2 class="flex items-center gap-2">
-          <img class="size-5" src={asset('/favicon.svg')} alt="Mermaid Live Editor" />
-          Mermaid Live Editor
+          <img class="size-5" src={asset('/favicon.svg')} alt="当前图表链接" />
+          当前图表链接
         </h2>
         <CopyInput value={window.location.href} />
-        <Dialog.Description>
-          The content of the diagrams you create never leaves your browser.
-        </Dialog.Description>
+        <Dialog.Description>图表内容保存在链接中，不会上传至外部服务。</Dialog.Description>
       </div>
       <Separator />
       <div class="flex flex-col gap-3">
         <h2 class="flex items-center gap-2">
           <CodeIcon class="size-5" />
-          Embed
+          本地嵌入
         </h2>
-        <Dialog.Description>
-          Embed a live, interactive diagram in your own website or blog.
-        </Dialog.Description>
+        <Dialog.Description>在本地页面中嵌入可交互的图表。</Dialog.Description>
         <div class="grid grid-cols-2 gap-3">
           <label class="flex flex-col gap-1 text-sm">
-            Theme
+            图表主题
             <select
               bind:value={theme}
               class="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground">
@@ -93,7 +93,7 @@
             </select>
           </label>
           <label class="flex flex-col gap-1 text-sm">
-            Look
+            图表风格
             <select
               bind:value={look}
               class="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground">
@@ -103,11 +103,11 @@
             </select>
           </label>
           <label class="flex flex-col gap-1 text-sm">
-            Width
+            宽度
             <Input bind:value={width} />
           </label>
           <label class="flex flex-col gap-1 text-sm">
-            Height
+            高度
             <Input bind:value={height} />
           </label>
         </div>
@@ -121,27 +121,27 @@
                 mode = value;
               }
             }}>
-            <ToggleGroup.Item value="light">Light</ToggleGroup.Item>
-            <ToggleGroup.Item value="dark">Dark</ToggleGroup.Item>
+            <ToggleGroup.Item value="light">浅色</ToggleGroup.Item>
+            <ToggleGroup.Item value="dark">深色</ToggleGroup.Item>
           </ToggleGroup.Root>
           <label class="flex items-center gap-2 text-sm">
             <Switch bind:checked={controls} />
-            Controls
+            工具栏
           </label>
           <label class="flex items-center gap-2 text-sm">
             <Switch bind:checked={grid} />
-            Grid
+            网格
           </label>
           <label class="flex items-center gap-2 text-sm">
             <Switch bind:checked={showPreview} />
-            Preview
+            预览
           </label>
         </div>
         {#if showPreview}
           <iframe
             data-testid={TID.embedPreview}
             src={embedUrls.url}
-            title="Embed preview"
+            title="嵌入预览"
             class="h-52 w-full rounded-lg border"
             sandbox={EMBED_IFRAME_SANDBOX}></iframe>
         {/if}
@@ -157,7 +157,7 @@
                 }
               }}>
               <ToggleGroup.Item value="iframe">iframe</ToggleGroup.Item>
-              <ToggleGroup.Item value="webComponent">Web component</ToggleGroup.Item>
+              <ToggleGroup.Item value="webComponent">网页组件</ToggleGroup.Item>
             </ToggleGroup.Root>
             <textarea
               data-testid={TID.embedSnippet}

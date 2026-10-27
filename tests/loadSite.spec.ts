@@ -1,5 +1,3 @@
-import type { State } from '$/types';
-import assert from 'node:assert';
 import { expect, test } from './test';
 
 test.describe('Site Loads', () => {
@@ -22,6 +20,7 @@ test.describe('Site Loads', () => {
       '/#/edit/eyJjb2RlIjoiZ3JhcGggVERcbiAgICBBW0NocmlzdG1hc10gLS0-fEdldCBtb25leXwgQihHbyBzaG9wcGluZylcbiAgICBCIC0tPiBDe0xldCBtZSB0aGlua31cbiAgICBDIC0tPnxPbmV8IERbTGFwdG9wXVxuICAgIEMgLS0-fFR3b3wgRVtpUGhvbmVdXG4gICAgQyAtLT58VGhyZWV8IEZbZmE6ZmEtY2FyIENhcl0iLCJtZXJtYWlkIjp7InRoZW1lIjoiZGVmYXVsdCJ9LCJ1cGRhdGVFZGl0b3IiOmZhbHNlfQ'
     );
     await expect(page).toHaveURL(/.*\/edit#pako:eNp/);
+    await editPage.checkTextInView('Car');
   });
 
   test('should load sample diagrams when clicked', async ({ editPage }) => {
@@ -33,86 +32,10 @@ test.describe('Site Loads', () => {
     await editPage.checkInEditor('classDiagram');
   });
 
-  test.describe.skip('github', () => {
-    test('should load diagram from gist', async ({ editPage, page }) => {
-      await editPage.start(
-        `/edit?gist=https://gist.github.com/sidharthv96/6268a23e673a533dcb198f241fd7012a`
-      );
-      await page.getByText('History').click();
-      await editPage.checkTextInView('Go shopping!!');
-      await expect(page.getByText('Revisions')).toBeVisible();
-      await expect(page.getByText('sidharthv96 v8f8f1e2')).toBeVisible();
-      await expect(page.getByText('sidharthv96 v7851e19')).toBeVisible();
-      const codeStore = await page.evaluate(() => localStorage.getItem('codeStore'));
-      expect(codeStore).toBeTruthy();
-    });
-
-    test('should load diagram from gist revision', async ({ editPage, page }) => {
-      await editPage.start(
-        '/edit?gist=https://gist.github.com/sidharthv96/6268a23e673a533dcb198f241fd7012a/ec9b4ab0e41e4ff6287326cd3cb47affd7851e19'
-      );
-      await page.getByText('History').click();
-      await editPage.checkTextInView('Party');
-      await expect(page.getByText('Revisions')).toBeVisible();
-      await expect(page.getByText('sidharthv96 v7851e19')).toBeVisible();
-      const codeStore = await page.evaluate(() => localStorage.getItem('codeStore'));
-      expect(codeStore).toBeTruthy();
-    });
-
-    test('should load diagram from raw files', async ({ editPage, page }) => {
-      await editPage.start(
-        '/edit?code=https://gist.githubusercontent.com/sidharthv96/6268a23e673a533dcb198f241fd7012a/raw/4eb03887e6a41397e80bdcdbf94017c498f8f1e2/code.mmd&config=https://gist.githubusercontent.com/sidharthv96/6268a23e673a533dcb198f241fd7012a/raw/4eb03887e6a41397e80bdcdbf94017c498f8f1e2/config.json'
-      );
-      await editPage.checkTextInView('Party');
-      const codeStore = await page.evaluate(() => localStorage.getItem('codeStore'));
-      expect(codeStore).toBeTruthy();
-    });
-  });
-
-  test('should prompt user to scrub unsafe config', async ({ editPage, page }) => {
-    let dialogAccepted = false;
-    page.on('dialog', async (dialog) => {
-      expect(dialog.type()).toBe('confirm');
-      expect(dialog.message()).toContain('from the config for safety');
-      await dialog.accept();
-      dialogAccepted = true;
-    });
-    await editPage.start(
-      `/edit?${new URLSearchParams({
-        code: `data:application/vnd.mermaid,${encodeURIComponent('flowchart TD\nHello-->World')}`,
-        config: `data:application/json,${encodeURIComponent(
-          JSON.stringify({
-            someOtherSetting: 'Test value',
-            securityLevel: 'loose',
-            secure: [],
-            themeVariables: {
-              nodeBorder: '</style></svg><script>alert("XSS")</script>'
-            }
-          })
-        )}`
-      }).toString()}`
-    );
-    await editPage.checkTextInView('Hello');
-    await expect.poll(() => dialogAccepted).toBeTruthy();
-    const codeStore = await page.evaluate(() => localStorage.getItem('codeStore'));
-    assert(codeStore);
-    const parsedStore = JSON.parse(codeStore) as State;
-    const parsedConfig = JSON.parse(parsedStore.mermaid) as Record<string, unknown>;
-    expect(parsedConfig).toEqual({
-      someOtherSetting: 'Test value',
-      // The editor fills in the diagram type's default theme (a flowchart here).
-      theme: 'redux-color',
-      themeVariables: {}
-    });
-    // should scrub unsafe securityLevel but keep other settings
-    expect(parsedConfig.securityLevel).toBeUndefined();
-    expect(parsedConfig.secure).toBeUndefined();
-  });
-
   test('should show troubleshooting steps if loading fails', async ({ editPage, page }) => {
     await editPage.start('/#/edit/eyJjb2RlIjoiZ3JhcGggVERcbiAg');
     await page.reload({ waitUntil: 'networkidle' });
-    await editPage.checkTextInView('Please Click here to Raise an issue in github.');
+    await editPage.checkTextInView('无法读取图表链接');
   });
 });
 

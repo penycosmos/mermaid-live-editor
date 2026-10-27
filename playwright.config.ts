@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const port = process.env.PLAYWRIGHT_PORT ?? '3000';
+const baseURL = `http://localhost:${port}`;
+
 export default defineConfig({
   forbidOnly: !!process.env.CI,
   fullyParallel: true,
@@ -13,15 +16,15 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   testDir: './tests',
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL,
     browserName: 'chromium',
     permissions: ['clipboard-read', 'clipboard-write'],
     trace: 'retain-on-failure',
     viewport: { width: 1920, height: 1080 }
   },
   webServer: {
-    command: `pnpm ${process.env.CI ? 'preview' : 'dev'}`,
-    url: 'http://localhost:3000',
+    command: `pnpm ${process.env.CI ? 'preview' : 'dev'}${port === '3000' ? '' : ` --port ${port}`}`,
+    url: baseURL,
     reuseExistingServer: !process.env.CI
   },
   workers: process.env.CI ? 3 : undefined

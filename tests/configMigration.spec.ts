@@ -1,4 +1,3 @@
-import { C } from '$/constants';
 import { expect, test, type Page } from '@playwright/test';
 
 // What a pre-mermaid-12 install left in localStorage: the editor seeded every
@@ -16,20 +15,19 @@ const legacyCodeStore = JSON.stringify({
 // Guarded so reloads do not re-seed.
 const seedLegacyInstall = (page: Page) =>
   page.addInitScript(
-    ([codeStore, chooserKey]) => {
+    ([codeStore]) => {
       if (localStorage.getItem('migrations') === null) {
         localStorage.setItem('migrations', JSON.stringify({ version: 0 }));
         localStorage.setItem('codeStore', codeStore);
-        localStorage.setItem(chooserKey, 'true');
       }
     },
-    [legacyCodeStore, C.editorChooserDismissedKey]
+    [legacyCodeStore]
   );
 
 const openEditor = async (page: Page) => {
   await page.goto('/edit');
   // Mounting can take a while on a cold dev server; the sidebar marks it done.
-  await page.getByText('Sample Diagrams', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '代码编辑', exact: true }).waitFor();
 };
 
 const storedConfig = (page: Page) =>

@@ -59,5 +59,26 @@ export const deserializeState = (state: string): State => {
     serialized = state;
   }
   const json = serdes[type].deserialize(serialized);
-  return JSON.parse(json) as State;
+  const parsed: unknown = JSON.parse(json);
+  // Early share links stored config as an object instead of a JSON string.
+  if (
+    parsed &&
+    typeof parsed === 'object' &&
+    'mermaid' in parsed &&
+    parsed.mermaid &&
+    typeof parsed.mermaid === 'object' &&
+    !Array.isArray(parsed.mermaid)
+  ) {
+    parsed.mermaid = JSON.stringify(parsed.mermaid, undefined, 2);
+  }
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    !('code' in parsed) ||
+    typeof parsed.code !== 'string' ||
+    ('mermaid' in parsed && typeof parsed.mermaid !== 'string')
+  ) {
+    throw new Error('图表数据格式无效');
+  }
+  return parsed as State;
 };

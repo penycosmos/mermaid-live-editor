@@ -1,121 +1,57 @@
-[![Join our Discord!](https://img.shields.io/static/v1?message=join%20chat&color=9cf&logo=discord&label=discord)](https://discord.gg/sKeNQX4Wtj)
-[![Netlify Status](https://api.netlify.com/api/v1/badges/27fa023d-7c73-4a3f-9791-b3b657a47100/deploy-status)](https://app.netlify.com/sites/mermaidjs/deploys)
+# Mermaid 离线编辑器
 
-# Mermaid Live Editor
+一个在本机运行的 Mermaid 图表工作台。以画布为中心，按需展开代码、模板和历史，支持中文界面及明暗主题。
 
-Edit, preview and share mermaid charts/diagrams.
+- 桌面使用 Monaco，移动端使用 CodeMirror，支持实时预览与 JSON 配置编辑。
+- 打开、保存 `.mmd` 源码，导出 PNG/SVG，复制图片。
+- 本地收藏、每分钟自动历史、JSON 历史备份与恢复。
+- 当前本地服务内的查看链接、iframe 和网页组件嵌入。
+- 无广告、统计、账号、外部渲染器或远程文件加载。脚本、字体及图标由本地构建提供。
 
-## Features
+## 启动
 
-- Edit and preview flowcharts, sequence diagrams, gantt diagrams in real time.
-- Save the result as a svg
-- Get a link to a viewer of the diagram so that you can share it with others.
-- Get a link to edit the diagram so that someone else can tweak it and send a new link back
-
-## Live demo
-
-You can try out a [live version](https://mermaid.live/).
-
-# Contributors are welcome!
-
-If you want to speed up the progress for mermaid-live-editor, join the Discord channel and contact knsv.
-
-## Docker
-
-### Run published image
-
-```bash
-docker run --platform linux/amd64 --publish 8000:8080 ghcr.io/mermaid-js/mermaid-live-editor
-```
-
-The published docker image is built using our default environment variables. You cannot override them when running the image. If you need to customize them, you will need to build the image yourself.
-
-### To configure renderer URL
-
-When building set the MERMAID_RENDERER_URL build argument to the rendering
-service.
-Example:
-Default is`https://mermaid.ink`.
-Set to empty string to disable PNG and SVG links under Actions
-
-### To configure Kroki Instance URL
-
-When building set the MERMAID_KROKI_RENDERER_URL build argument to your Kroki
-instance.
-Default is `https://kroki.io`
-Set to empty string to disable Kroki link under Actions
-
-### To configure Analytics
-
-When building set the MERMAID_ANALYTICS_URL build argument to your plausible instance, and MERMAID_DOMAIN to your domain.
-
-Default is empty, disabling analytics.
-
-### To enable Mermaid Chart links and promotion
-
-When building set the MERMAID_IS_ENABLED_MERMAID_CHART_LINKS build argument to `true`
-
-Default is empty, disabling button to save to Mermaid Chart and promotional banner.
-
-### To update the Security modal
-
-The modal shown on clicking the security link assumes analytics, renderer, Kroki
-and Mermaid chart are enabled. You can update it by modifying `Privacy.svelte`
-if you wish.
-
-### Development
-
-```bash
-docker compose up --build
-```
-
-Then open http://localhost:3000
-
-### Building and running images locally
-
-#### Build
-
-```bash
-docker build -t mermaid-js/mermaid-live-editor .
-```
-
-#### Run
-
-```bash
-docker run --detach --name mermaid-live-editor --publish 8080:8080 mermaid-js/mermaid-live-editor
-```
-
-Visit: <http://localhost:8080>
-
-#### Stop
-
-```bash
-docker stop mermaid-live-editor
-```
-
-## Setup
-
-Below link will help you making a copy of the repository in your local system.
-
-https://docs.github.com/en/get-started/quickstart/fork-a-repo
-
-## Requirements
-
-- [Node.js](https://nodejs.org/en/) current LTS version
-- [pnpm](https://pnpm.io/) package manager. Install with `corepack enable pnpm`
-
-## Development
+需要 Node.js ≥ 24.16.0 和 pnpm 10.34.7。
 
 ```sh
 pnpm install
-pnpm dev -- --open
+pnpm dev
 ```
 
-This app is created with Svelte Kit.
+访问 `http://localhost:3000`。安装依赖需要软件包缓存或网络；应用运行不需要互联网，但本地服务必须保持运行。
 
-## Release
+## 生产构建
 
-When a PR is created targeting master, it will be built and deployed by Netlify.
-The URL will be indicated in a Comment in the PR.
+```sh
+pnpm build
+pnpm preview
+```
 
-Once the PR is merged, it will automatically be released.
+`docs/` 是生成的静态站点，可由本机静态服务器或 Nginx 提供。不要手工修改构建产物。
+
+```sh
+docker build -t mermaid-offline .
+docker run --rm -p 8080:8080 mermaid-offline
+```
+
+如需部署到子路径，在构建时设置 `MERMAID_BASE_PATH`，例如 `/diagrams`。环境变量仅在构建时生效。
+
+## 本地数据
+
+浏览器 localStorage 保留图表及历史。新建、打开文件和替换模板前会保存当前图表到时间线，时间线最多保留 30 条；重要内容请收藏并导出历史备份。
+
+`.mmd` 文件只包含图表源码。独立的渲染配置随历史 JSON 备份保存。链接中包含图表内容，仅适用于能够访问该本地服务的浏览器。
+
+用户源码保持原样；预览和导出禁止外部图片、样式及外站跳转。需要图片时使用同源本地资源或内嵌图片。此版本不提供 PWA 离线缓存或桌面安装包。
+
+## 检查
+
+```sh
+pnpm check
+pnpm lint
+pnpm vitest run --dir src
+pnpm test:e2e
+```
+
+Playwright 默认使用已有开发服务，或自行启动开发服务。生产回归先运行 `pnpm build`，再执行 `CI=true pnpm test:e2e`。
+
+项目与依赖的许可证继续有效，详见 [LICENSE](LICENSE)。

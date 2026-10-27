@@ -71,13 +71,13 @@ base.describe('Embed page', () => {
     );
   });
 
-  base('should render inside the sandboxed iframe the snippets use', async ({ page }) => {
+  base('should render inside the sandboxed iframe the snippets use', async ({ page, baseURL }) => {
     failOnDialog(page);
     const embedSrc = `/embed#code:${encodeURIComponent('graph TD\n  A[Sandboxed]-->B')}`;
     await page.setContent(
       `<!doctype html><iframe id="embed" title="embed"
         sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-        src="http://localhost:3000${embedSrc}"
+        src="${baseURL}${embedSrc}"
         style="width:800px;height:500px;border:0"></iframe>`
     );
     const frame = page.frameLocator('#embed');
@@ -100,23 +100,23 @@ base.describe('Embed page', () => {
 editorTest.describe('Share dialog embed section', () => {
   editorTest('should only offer the live editor link and the embed', async ({ editPage, page }) => {
     void editPage;
-    await page.getByRole('button', { name: 'Share' }).click();
+    await page.getByRole('button', { name: '本地链接与嵌入' }).click();
     const dialog = page.getByRole('dialog');
-    await expect(dialog.getByRole('heading', { name: 'Mermaid Live Editor' })).toBeVisible();
-    await expect(dialog.getByRole('heading', { name: 'Embed' })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: '当前图表链接' })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: '本地嵌入' })).toBeVisible();
     // The Mermaid Chart Playground is retired and must not be offered any more.
     await expect(dialog).not.toContainText('Playground');
   });
 
   editorTest('should offer iframe and web component snippets', async ({ editPage, page }) => {
     void editPage;
-    await page.getByRole('button', { name: 'Share' }).click();
+    await page.getByRole('button', { name: '本地链接与嵌入' }).click();
     const snippet = page.getByTestId(TID.embedSnippet);
     await expect(snippet).toBeVisible();
     await expect(snippet).toHaveValue(/\/embed\?.*#pako:/);
     await expect(snippet).toHaveValue(/<iframe/);
     await expect(snippet).toHaveValue(/sandbox="allow-scripts allow-same-origin/);
-    await page.getByRole('radio', { name: 'Web component' }).click();
+    await page.getByRole('radio', { name: '网页组件' }).click();
     await expect(snippet).toHaveValue(/<mermaid-embed/);
   });
 });

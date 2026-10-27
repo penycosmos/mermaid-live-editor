@@ -10,7 +10,6 @@ import {
   removeEntry,
   renameEntry,
   restoreEntries,
-  setLoaderEntries,
   setMode,
   startAutoSave,
   stateKey,
@@ -20,7 +19,7 @@ import {
 const codeState = (code: string) => ({ ...defaultState, code });
 
 /** Read the entries currently shown for a given mode. */
-const entriesFor = (mode: 'auto' | 'manual' | 'loader'): HistoryEntry[] => {
+const entriesFor = (mode: 'auto' | 'manual'): HistoryEntry[] => {
   setMode(mode);
   return historyState.entries;
 };
@@ -31,7 +30,6 @@ beforeEach(() => {
   clearActive();
   setMode('auto');
   clearActive();
-  setLoaderEntries([]);
   setMode('manual');
 });
 
@@ -149,9 +147,6 @@ describe('historyState.entries', () => {
     setMode('auto');
     expect(historyState.entries).toHaveLength(1);
     expect(historyState.entries[0].state.code).toBe('auto-code');
-
-    setMode('loader');
-    expect(historyState.entries).toHaveLength(0);
   });
 });
 
@@ -173,15 +168,6 @@ describe('removeEntry / clearActive', () => {
     clearActive();
     expect(entriesFor('manual')).toHaveLength(0);
     expect(entriesFor('auto')).toHaveLength(1);
-  });
-
-  it('does nothing in loader mode', () => {
-    setLoaderEntries([
-      { name: 'rev', state: defaultState, time: 1, type: 'loader', url: 'http://x' }
-    ]);
-    setMode('loader');
-    clearActive();
-    expect(historyState.entries).toHaveLength(1);
   });
 });
 
@@ -218,37 +204,16 @@ describe('renameEntry', () => {
     renameEntry(historyState.entries[0].id, '   ');
     expect(historyState.entries[0].name).toBe(before);
   });
-
-  it('does nothing in loader mode', () => {
-    setLoaderEntries([
-      { name: 'rev', state: defaultState, time: 1, type: 'loader', url: 'http://x' }
-    ]);
-    setMode('loader');
-    const id = historyState.entries[0].id;
-    renameEntry(id, 'changed');
-    expect(historyState.entries[0].name).toBe('rev');
-  });
-});
-
-describe('setLoaderEntries', () => {
-  it('replaces the in-memory revisions and assigns ids', () => {
-    setLoaderEntries([
-      { name: 'v1', state: defaultState, time: 1, type: 'loader', url: 'http://x/1' },
-      { name: 'v2', state: defaultState, time: 2, type: 'loader', url: 'http://x/2' }
-    ]);
-    setMode('loader');
-    expect(historyState.entries).toHaveLength(2);
-    expect(historyState.entries.every((e) => e.id)).toBe(true);
-
-    setLoaderEntries([
-      { name: 'only', state: defaultState, time: 3, type: 'loader', url: 'http://x/3' }
-    ]);
-    expect(historyState.entries).toHaveLength(1);
-    expect(historyState.entries[0].name).toBe('only');
-  });
 });
 
 describe('restoreEntries', () => {
+  it('rejects non-list backups and invalid diagram fields without altering history', () => {
+    expect(() => restoreEntries({})).toThrow('历史备份必须是列表');
+    expect(
+      restoreEntries([{ type: 'manual', time: 0, state: { code: 4, mermaid: '{}' } }])
+    ).toEqual({ restored: 0, invalid: 1, duplicates: 0 });
+    expect(entriesFor('manual')).toHaveLength(0);
+  });
   it('routes each entry to the store matching its own type', () => {
     const result = restoreEntries([
       { id: 'a1', name: 'a', state: defaultState, time: 10, type: 'auto' },

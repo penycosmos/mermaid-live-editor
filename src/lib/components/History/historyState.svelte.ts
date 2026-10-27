@@ -1,8 +1,7 @@
-import type { HistoryEntry, HistoryType, Optional, State } from '$lib/types';
+import type { HistoryEntry, HistoryType, State } from '$lib/types';
 import { persisted, readJSON, type Persisted } from '$lib/util/persist.svelte';
 import { inputState } from '$lib/util/state.svelte';
-import { logEvent } from '$lib/util/stats';
-import { generateSlug } from 'random-word-slugs';
+
 import { v4 as uuidV4 } from 'uuid';
 
 const MAX_AUTO_HISTORY_LENGTH = 30;
@@ -11,34 +10,17 @@ const AUTO_SAVE_INTERVAL = 60_000;
 const auto = persisted<HistoryEntry[]>('autoHistoryStore', []);
 const manual = persisted<HistoryEntry[]>('manualHistoryStore', []);
 const mode = persisted<HistoryType>('autoHistoryMode', 'manual');
-let loader = $state<HistoryEntry[]>([]);
 
 // Loader entries are in-memory, so a persisted 'loader' mode is empty after reload.
-if (mode.value === 'loader') {
+if (!['auto', 'manual'].includes(mode.value)) {
   mode.value = 'manual';
 }
 
-// The persisted slot backing a mode; loader is in-memory and has no slot.
-const slotFor = (m: HistoryType): Persisted<HistoryEntry[]> | null => {
-  switch (m) {
-    case 'auto': {
-      return auto;
-    }
-    case 'manual': {
-      return manual;
-    }
-    default: {
-      return null;
-    }
-  }
-};
+const slotFor = (m: HistoryType): Persisted<HistoryEntry[]> => (m === 'auto' ? auto : manual);
 
 export const historyState = {
   get entries(): HistoryEntry[] {
-    return slotFor(mode.value)?.value ?? loader;
-  },
-  get loaderEntries(): HistoryEntry[] {
-    return loader;
+    return slotFor(mode.value).value;
   },
   get mode(): HistoryType {
     return mode.value;
@@ -56,7 +38,7 @@ export const stateKey = (state: State): string =>
 
 const createEntry = (state: State, type: 'auto' | 'manual'): HistoryEntry => ({
   id: uuidV4(),
-  name: generateSlug(2),
+  name: `图表 ${new Date().toLocaleString('zh-CN')}`,
   state,
   time: Date.now(),
   type
@@ -76,7 +58,7 @@ const addEntry = (
   const trimmed =
     maxLength && entries.length >= maxLength ? entries.slice(0, maxLength - 1) : entries;
   slot.value = [createEntry(state, type), ...trimmed];
-  logEvent('history', { action: 'save', type });
+
   return true;
 };
 
@@ -85,43 +67,37 @@ export const addManualEntry = (state: State): boolean => addEntry(manual, state,
 export const addAutoEntry = (state: State): boolean =>
   addEntry(auto, state, 'auto', MAX_AUTO_HISTORY_LENGTH);
 
-// Replaces the in-memory revisions (e.g. when a gist is loaded), assigning ids.
-export const setLoaderEntries = (entries: Optional<HistoryEntry, 'id'>[]): void => {
-  loader = entries.map((entry) =>
-    entry.id ? (entry as HistoryEntry) : { ...entry, id: uuidV4() }
-  );
-};
-
 export const removeEntry = (id: string): void => {
   const slot = slotFor(mode.value);
-  if (!slot) {
-    return;
-  }
   slot.value = slot.value.filter((entry) => entry.id !== id);
-  logEvent('history', { action: 'clear', type: 'single' });
 };
 
 export const renameEntry = (id: string, name: string): void => {
   const trimmed = name.trim();
   const slot = slotFor(mode.value);
-  if (!trimmed || !slot) {
+  if (!trimmed) {
     return;
   }
   slot.value = slot.value.map((entry) => (entry.id === id ? { ...entry, name: trimmed } : entry));
-  logEvent('history', { action: 'rename' });
 };
 
 export const clearActive = (): void => {
   const slot = slotFor(mode.value);
-  if (!slot) {
-    return;
-  }
   slot.value = [];
-  logEvent('history', { action: 'clear', type: 'all' });
 };
 
-const validateEntry = (entry: HistoryEntry): boolean =>
-  Boolean(entry && entry.type && entry.state) && typeof entry.time === 'number';
+const validateEntry = (entry: unknown): entry is HistoryEntry => {
+  if (!entry || typeof entry !== 'object') return false;
+  const value = entry as Partial<HistoryEntry>;
+  return (
+    (value.type === 'auto' || value.type === 'manual') &&
+    typeof value.time === 'number' &&
+    Number.isFinite(value.time) &&
+    typeof value.state?.code === 'string' &&
+    typeof value.state.mermaid === 'string' &&
+    (value.id === undefined || typeof value.id === 'string')
+  );
+};
 
 export interface RestoreResult {
   restored: number;
@@ -131,8 +107,9 @@ export interface RestoreResult {
 
 // Routes each uploaded entry to the store matching its own type, skipping ids
 // that already exist.
-export const restoreEntries = (data: HistoryEntry[]): RestoreResult => {
-  const valid = data.filter((entry) => validateEntry(entry));
+export const restoreEntries = (data: unknown): RestoreResult => {
+  if (!Array.isArray(data)) throw new Error('历史备份必须是列表');
+  const valid = data.filter(validateEntry);
   const invalid = data.length - valid.length;
   let restored = 0;
 
@@ -146,13 +123,19 @@ export const restoreEntries = (data: HistoryEntry[]): RestoreResult => {
       continue;
     }
     const existingIDs = slot.value.map(({ id }) => id);
-    const fresh = incoming.filter(({ id }) => !existingIDs.includes(id));
+    const fresh = incoming
+      .map((entry) => ({ ...entry, id: entry.id || uuidV4() }))
+      .filter(({ id }) => {
+        if (existingIDs.includes(id)) return false;
+        existingIDs.push(id);
+        return true;
+      });
     restored += fresh.length;
     slot.value = [...slot.value, ...fresh].sort((a, b) => b.time - a.time);
   }
 
   const duplicates = valid.length - restored;
-  logEvent('history', { action: 'restore', duplicates, invalid, success: restored });
+
   return { restored, invalid, duplicates };
 };
 
