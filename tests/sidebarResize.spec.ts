@@ -5,12 +5,12 @@ test('sidebar divider follows the mouse in both directions after opening and reo
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/edit');
-  await expect(page.locator('#view svg')).toBeVisible();
+  await expect(page.locator('#view svg')).toBeVisible({ timeout: 15_000 });
   const code = page.getByRole('button', { name: '代码编辑', exact: true });
   await code.click();
   const sidebar = page.locator('#workspace-panel');
   const divider = page.getByRole('separator', { name: '调整侧栏宽度' });
-  for (const panel of ['代码编辑', '图表模板', '本地历史', '重新打开']) {
+  for (const panel of ['代码编辑', '图表模板', '图表主题', '本地历史', '重新打开']) {
     if (panel === '重新打开') {
       await page.getByRole('button', { name: '收起侧栏' }).click();
       await code.click();

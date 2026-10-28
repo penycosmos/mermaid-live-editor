@@ -86,13 +86,19 @@ export const buildEmbedUrls = (options: EmbedUrlOptions): EmbedUrls => {
   const grid = options.grid !== false;
 
   // Settings live in the query string (so they override the hash state).
-  const qs = encodeEmbedParams({
-    controls: options.controls !== false,
-    grid,
-    look: options.look,
-    mode: options.mode,
-    theme: options.theme
-  });
+  const query = new URLSearchParams(
+    encodeEmbedParams({
+      controls: options.controls !== false,
+      grid,
+      look: options.look,
+      mode: options.mode,
+      theme: options.theme
+    })
+  );
+  // The web component carries code in its body, so its URL must also carry config.
+  if (options.config && Object.keys(options.config).length > 0)
+    query.set('config', JSON.stringify(options.config));
+  const qs = query.toString();
 
   const base = `${host}/embed`;
   const settingsUrl = qs ? `${base}?${qs}` : base;

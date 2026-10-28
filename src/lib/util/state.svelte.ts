@@ -10,7 +10,13 @@ import {
   replaceLineNumberInErrorMessage
 } from './errorHandling';
 import { darkVariantOf, getDefaultTheme, isManagedTheme, parse } from './mermaid';
-import { readJSON, writeJSON } from './persist.svelte';
+import { persisted, readJSON, writeJSON } from './persist.svelte';
+import {
+  normalizeThemePreferences,
+  resolveDiagramTheme,
+  type DiagramMode,
+  type DiagramThemeId
+} from './diagramThemes';
 import { deserializeState, serializeState } from './serde';
 import { formatJSON } from './util';
 
@@ -21,6 +27,12 @@ const urlParseFailedState = `flowchart TD
     B --> C[也可以打开历史记录恢复本机图表]`;
 
 const CODE_STORE_KEY = 'codeStore';
+const themePreferenceStore = persisted<unknown>('diagramThemePreferences', {});
+export const themePreferences = {
+  get current() {
+    return normalizeThemePreferences(themePreferenceStore.value);
+  }
+};
 
 // The single mutable input state; only update() below may write to it.
 // The fallback is cloned so mutations never write through to defaultState.
@@ -110,15 +122,18 @@ const processState = async (state: State) => {
 
 // Replaces the old URL-hash store subscription; assigned by initURLSubscription.
 let updateHash: ((serialized: string) => void) | undefined;
+let processingRevision = 0;
 
 // Persist the current input state and asynchronously re-validate it,
 // publishing the result to `validatedState` (and the URL hash, once
 // initURLSubscription has run). Only called from update(), which suppresses
 // dependency tracking.
 const persistAndProcess = (): void => {
+  const revision = ++processingRevision;
   const snapshot = $state.snapshot(input) as State;
   writeJSON(CODE_STORE_KEY, snapshot);
   void processState(snapshot).then((processed) => {
+    if (revision !== processingRevision) return;
     validatedCurrent = processed;
     updateHash?.(processed.serialized);
     syncManagedTheme(processed.diagramType);
@@ -208,6 +223,7 @@ export const updateConfig = (config: string): void => {
 };
 
 let siteDark = false;
+let manageAppearance = true;
 
 // The editor manages the diagram theme unless the user picked one of their
 // own. A missing theme, mermaid's global default, a config section's default
@@ -218,7 +234,7 @@ let siteDark = false;
 // validation finds the theme already in place. Reads are untracked so an
 // effect calling toggleDarkTheme does not subscribe to the input state.
 const syncManagedTheme = (diagramType: string | undefined): void => {
-  if (!diagramType) {
+  if (!diagramType || !manageAppearance) {
     return;
   }
   untrack(() => {
@@ -226,6 +242,14 @@ const syncManagedTheme = (diagramType: string | undefined): void => {
     try {
       config = JSON.parse(input.mermaid) as MermaidConfig;
     } catch {
+      return;
+    }
+    if (!config || typeof config !== 'object' || Array.isArray(config)) return;
+    const preferences = themePreferences.current;
+    if (preferences.enabled) {
+      const mode = siteDark ? 'dark' : 'light';
+      const next = resolveDiagramTheme(config, preferences[mode], mode, diagramType);
+      if (JSON.stringify(config) !== JSON.stringify(next)) updateConfig(formatJSON(next));
       return;
     }
     if (!isManagedTheme(config.theme)) {
@@ -242,9 +266,27 @@ const syncManagedTheme = (diagramType: string | undefined): void => {
   });
 };
 
-export const toggleDarkTheme = (dark: boolean): void => {
+export const toggleDarkTheme = (dark: boolean, manage = true): void => {
   siteDark = dark;
+  manageAppearance = manage;
   syncManagedTheme(untrack(() => validatedCurrent.diagramType));
+};
+
+export const selectDiagramTheme = (mode: DiagramMode, id: DiagramThemeId): void => {
+  let config: MermaidConfig;
+  try {
+    config = JSON.parse(input.mermaid) as MermaidConfig;
+    if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error();
+  } catch {
+    throw new Error('请先修复渲染配置，再选择主题');
+  }
+  siteDark = mode === 'dark';
+  themePreferenceStore.value = { ...themePreferences.current, enabled: true, [mode]: id };
+  updateConfig(
+    formatJSON(
+      resolveDiagramTheme(config, id, mode, validatedCurrent.diagramType ?? 'flowchart-v2')
+    )
+  );
 };
 
 const isOnlyDefaultTheme = (config: string): boolean => {

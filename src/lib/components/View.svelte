@@ -3,7 +3,7 @@
   import { recordRenderTime, shouldRefreshView } from '$/util/autoSync';
   import { PanZoomState } from '$/util/panZoom';
   import { renderAndPlaceDiagram } from '$/util/renderView';
-  import { updateCodeStore, validatedState } from '$/util/state.svelte';
+  import { inputState, updateCodeStore, validatedState } from '$/util/state.svelte';
 
   import FontAwesome, { mayContainFontAwesome } from '$lib/components/FontAwesome.svelte';
   import uniqueID from 'lodash-es/uniqueId';
@@ -41,6 +41,8 @@
   };
 
   const handleStateChange = async (state: ValidatedState) => {
+    // A URL load or rapid theme choice can supersede a queued render before validation finishes.
+    if (state.code !== inputState.code || state.mermaid !== inputState.mermaid) return;
     const startTime = Date.now();
     if (state.error !== undefined) {
       error = true;

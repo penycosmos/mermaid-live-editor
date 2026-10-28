@@ -40,6 +40,14 @@ export const renderAndPlaceDiagram = async ({
   template.innerHTML = svg;
   const safeSvg = template.content.querySelector('svg');
   if (!safeSvg) throw new Error('SVG not found');
+  if (diagramType.startsWith('flowchart')) {
+    for (const rect of safeSvg.querySelectorAll('.node > rect.basic.label-container')) {
+      if (!Number(rect.getAttribute('rx')) && !Number(rect.getAttribute('ry'))) {
+        rect.setAttribute('rx', '12');
+        rect.setAttribute('ry', '12');
+      }
+    }
+  }
   keepDiagramLocal(safeSvg);
   container.replaceChildren(safeSvg);
   let graphDiv = document.querySelector<SVGSVGElement>(`#${viewId}`);

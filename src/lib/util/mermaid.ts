@@ -15,13 +15,17 @@ export const render = async (
   id: string
 ): Promise<RenderResult> => {
   await init;
+  const renderConfig = silentlySanitizeConfig(config);
 
   // Should be able to call this multiple times without any issues.
   mermaid.initialize({
-    ...silentlySanitizeConfig(config),
+    ...renderConfig,
     dompurifyConfig: undefined,
     secure: [...(defaultMermaidConfig.secure ?? []), 'dompurifyConfig'],
-    securityLevel: 'strict'
+    securityLevel: 'strict',
+    // Apply before label measurement and embed in the SVG, independently of the theme.
+    themeCSS: `${renderConfig.themeCSS ?? ''}
+      .node .label div { max-width: none !important; width: max-content !important; white-space: nowrap !important; }`
   });
   return await mermaid.render(id, code);
 };

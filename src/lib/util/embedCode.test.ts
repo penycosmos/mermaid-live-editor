@@ -1,11 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { buildEmbedCode } from './embedCode';
 import { deserializeState } from './serde';
+import { resolveEmbedSettings } from './embed';
 
 const code = 'graph TD\n  A-->B';
 const host = 'http://localhost:3000';
 
 describe('buildEmbedCode', () => {
+  it('keeps appearance in code-only web components as well as iframe hashes', () => {
+    const config = {
+      themeCSS: '.node { fill: pink; }',
+      themeVariables: { edgeLabelBackground: '#1D2931' }
+    };
+    const { webComponent, url } = buildEmbedCode({ code, host, config, theme: 'redux-dark-color' });
+    const src = webComponent.match(/<mermaid-embed src="([^"]+)"/)?.[1];
+    if (!src) throw new Error('Web component source is missing');
+    const component = new URL(src);
+    component.hash = `code:${encodeURIComponent(code)}`;
+    for (const source of [new URL(url), component])
+      expect(resolveEmbedSettings(source).settings?.config).toMatchObject(config);
+  });
   it('should build a canonical embed URL with the state in the hash', () => {
     const { url } = buildEmbedCode({ code, host, theme: 'forest' });
     expect(url).toMatch(/^http:\/\/localhost:3000\/embed\?theme=forest#pako:/);

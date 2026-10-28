@@ -11,7 +11,7 @@
   import { silentlySanitizeConfig } from '$/util/sanitize';
   import { validatedState } from '$/util/state.svelte';
   import { copyToClipboard } from '$/util/util';
-  import { asset, base } from '$app/paths';
+  import { asset, base, resolve } from '$app/paths';
   import { Link2 } from 'lucide-svelte';
   import CodeIcon from '~icons/material-symbols/code';
   import ShareIcon from '~icons/material-symbols/share';
@@ -19,14 +19,9 @@
   import CopyInput from './CopyInput.svelte';
 
   const sanitizedConfig = $derived(silentlySanitizeConfig(validatedState.current.mermaid));
-  // Deliberate initial-value capture: the embed form seeds from the config at
-  // mount time and then owns its values.
-  // svelte-ignore state_referenced_locally
-  const initialConfig = sanitizedConfig;
-  const initialTheme = (initialConfig.theme as string | undefined) ?? 'default';
-  let theme = $state(initialTheme);
-  let look = $state((initialConfig.look as string | undefined) ?? 'classic');
-  let mode = $state<EmbedMode>(isDarkTheme(initialTheme) ? 'dark' : 'light');
+  let theme = $state('default');
+  let look = $state('classic');
+  let mode = $state<EmbedMode>('light');
   let controls = $state(true);
   let grid = $state(true);
   let width = $state('100%');
@@ -52,7 +47,13 @@
   const snippet = $derived(format === 'webComponent' ? snippets.webComponent : snippets.iframe);
 </script>
 
-<Dialog.Root>
+<Dialog.Root
+  onOpenChange={(open) => {
+    if (!open) return;
+    theme = sanitizedConfig.theme ?? 'default';
+    look = sanitizedConfig.look ?? 'classic';
+    mode = isDarkTheme(theme) ? 'dark' : 'light';
+  }}>
   <Dialog.Trigger
     class={buttonVariants({ variant: 'ghost', size: 'icon' })}
     title="本地链接与嵌入"
@@ -71,7 +72,8 @@
           <img class="size-5" src={asset('/favicon.svg')} alt="当前图表链接" />
           当前图表链接
         </h2>
-        <CopyInput value={window.location.href} />
+        <CopyInput
+          value={`${window.location.origin}${resolve('/edit', {})}#${validatedState.current.serialized}`} />
         <Dialog.Description>图表内容保存在链接中，不会上传至外部服务。</Dialog.Description>
       </div>
       <Separator />

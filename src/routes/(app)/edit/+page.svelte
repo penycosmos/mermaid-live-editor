@@ -1,6 +1,7 @@
 <script lang="ts">
   import Actions from '$/components/Actions.svelte';
   import Editor from '$/components/Editor.svelte';
+  import DiagramThemes from '$/components/DiagramThemes.svelte';
   import History from '$/components/History/History.svelte';
   import { addAutoEntry, startAutoSave } from '$/components/History/historyState.svelte';
   import Preset from '$/components/Preset.svelte';
@@ -17,6 +18,7 @@
     defaultState,
     getCodeRevision,
     inputState,
+    themePreferences,
     replaceInputState,
     updateCode,
     updateCodeStore,
@@ -29,6 +31,7 @@
   import { onDestroy, onMount } from 'svelte';
   import {
     Code2,
+    Palette,
     LayoutTemplate,
     History as HistoryIcon,
     FolderOpen,
@@ -40,7 +43,7 @@
     AlertCircle
   } from 'lucide-svelte';
 
-  type Panel = 'code' | 'templates' | 'history';
+  type Panel = 'code' | 'templates' | 'themes' | 'history';
   let panel = $state<Panel | null>(null);
   let editorOpened = $state(false);
   $effect(() => {
@@ -55,9 +58,15 @@
   const panels = [
     { id: 'code', label: '代码', icon: Code2 },
     { id: 'templates', label: '模板', icon: LayoutTemplate },
+    { id: 'themes', label: '主题', icon: Palette },
     { id: 'history', label: '历史', icon: HistoryIcon }
   ] as const;
-  const titles = { code: '代码编辑', templates: '图表模板', history: '本地历史' };
+  const titles = {
+    code: '代码编辑',
+    templates: '图表模板',
+    themes: '图表主题',
+    history: '本地历史'
+  };
 
   const backup = () => addAutoEntry($state.snapshot(inputState));
   const newDiagram = () => {
@@ -256,11 +265,18 @@
               >{label}</button>
           {/each}
         </div>
+        {#if validatedState.current.editorMode === 'config' && themePreferences.current.enabled}
+          <p class="px-4 pt-3 text-[11px] text-muted-foreground">
+            配色由主题面板管理，其他渲染设置仍可在此调整。
+          </p>
+        {/if}
         <div class="min-h-0 flex-1 pt-3"><Editor {isMobile} /></div>
       </div>
     {/if}
     {#if panel === 'templates'}
       <Preset />
+    {:else if panel === 'themes'}
+      <DiagramThemes />
     {:else if panel === 'history'}
       <History />
     {/if}
