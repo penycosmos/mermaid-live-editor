@@ -1,0 +1,542 @@
+%% 项目算子架构：情报推送（有效数据流视图）
+%% 事实来源：当前 src/main/java/com/etl/IntelligencePushApplication.java 及下述算子实现。
+%% 范围：现行业务契约下的有效数据路径，保留可配置分支；不是逐算子 StreamGraph 清单，UID 仍以源码和契约测试为准。
+%% 静态图包含 154 个节点、175 条边；图节点不等于运行时任务数。
+%% 13 个非算子节点：3 union（union original、claw3 union、merged stream）、4 keyby、6 个状态机内部逻辑分支；union/keyBy 不产生 Flink 算子。
+%% 隐藏：普通原文、人工 fetched 与人工原文缓存后的 Discard 终端；对应 CacheFunction 成功及记录丢弃均以空集合完成，失败不透传输入。
+%% 隐藏：Original-Only 发布支路；免 AI 普通原文的默认 noise 已在 Filter-Non-Noise-Result 进入 PG-only（AnalyzedStateMachine_v2、IntelligenceNoiseFilter）。
+%% 隐藏：晚期 Newsflash 发布与对应 PG-only 侧路；正常 Blockbeats 原文已由入口同一谓词的正反分支互斥剥离。
+%% 隐藏：Token-Resolve-Finalize-Only 支路；当前 TokenResolveResultHandler 的输出构造不再产生 _token_resolve_no_publish=true，通知后持久化仍保留。
+%% 边界：以上仅裁剪图示；历史状态、数据库回填及防御性兼容处理仍以源码为准，不据此认定所有历史输入绝对不可达。
+%% 配置覆盖：human analyzed topic、外部 token 解析与延迟行情 outbox 的开/关路径均保留；配置可启用不等于死分支，互斥路径不同时装配。
+%% 约定：连线上的 if 表示拓扑装配条件；enableHumanIntelligence 表示 human analyzed topic 非空，分支后续连线继承入口条件。
+%% 约定：未画 union 节点时由消费者的多条入边表示合流（状态通知、push time、PG-only、post-MQ、token 增量与 finance 闸）；
+%%      未画 keyby 节点时 keyBy 折叠进下游算子（Intelligence Processing V2、Human-Analyzed-Merge、Finance 闸）。
+%% 约定：虚线 = 侧输出、同源反向分流、控制回包与旁路合流；实线 = 主数据流。
+%% 约定：算子首行显示实际实现类，lambda 标为 FilterFunction；侧输出终端显示实际 Sink 类。
+%% 约定：union/keyBy 首行显示接线 API 或 KeySelector；状态机内部分支明确标识，算子末行保留真实 name。
+%% 约定：本图只表达接线，不表达并行度、chaining、bufferTimeout。
+%% 说明：state noai/v1/cache/retry/db/orphan 为 AnalyzedStateMachine_v2 内部逻辑分支，不是独立 Flink 算子。
+%% 说明：V2+ 分析结果由 AI 落库分支处理，不进入状态机。
+%% 说明：主 PG 成功输出后分出独立译文与普通刷新两路；译文经首次/来源过滤、unorderedWait、Map、独立 PG Sink，不再串在主业务入库前。
+%% 说明：延迟行情发布 mapper 与 sink 始终装配；图中保留 outbox 关闭时的有效输出路径，开启时 mapper 零输出，取样与回写在 DelayedMarketOutboxSource 内执行。
+%% 说明：延迟行情两种 Source 共用 name/uid，按 outbox 开关二选一；RMQSource → Update 与 OutboxSource 的输出共用空 Map 过滤 → 缓存刷新发布 → Discard。
+%% 说明：两种延迟模式仅在 EIM/AI 提交与 Redis 同步成功后输出 Token 刷新事件；Outbox 还须先提交任务完成状态，再接共用发布出口。
+%% 配色按实际 API 类型区分，不按 name 中的 Filter/Sink 等字样猜测；虚线边框表示非算子节点。
+%% 图例与不可见排版连线不计入上述 154 个拓扑节点与 175 条业务连线。
+%%{init: {"theme":"base","themeVariables":{"lineColor":"#B7C0C7","textColor":"#46515A","primaryTextColor":"#46515A","edgeLabelBackground":"#F8F9F7","dropShadow":"none","fontFamily":"Arial, Noto Sans CJK SC, Microsoft YaHei, sans-serif","fontSize":"14px"}}}%%
+flowchart TB
+  classDef default stroke-width:1px;
+  classDef op_source fill:#D8E6F0,stroke:#9EB8CC,color:#46515A;
+  classDef op_filter fill:#EFE1B8,stroke:#C8B273,color:#46515A;
+  classDef op_map fill:#DCE7CE,stroke:#AEC294,color:#46515A;
+  classDef op_flatmap fill:#D0E5DB,stroke:#91B5A3,color:#46515A;
+  classDef op_async fill:#E1D9EE,stroke:#B7A5D0,color:#46515A;
+  classDef op_process fill:#F0DCCA,stroke:#D0AE90,color:#46515A;
+  classDef op_sink fill:#EDD5DD,stroke:#CAA1B0,color:#46515A;
+  classDef op_union fill:#DFE3E9,stroke:#AFB8C6,color:#56616A,stroke-dasharray:5 3;
+  classDef op_keyby fill:#D5E7E9,stroke:#9CBFC4,color:#56616A,stroke-dasharray:5 3;
+  classDef op_custom fill:#E8E6E1,stroke:#C3BFB6,color:#56616A,stroke-dasharray:5 3;
+  subgraph L_push["图例 · 按实际 API 分类；虚线边框为非算子节点"]
+    direction LR
+    L_source["source · 数据源"]:::op_source
+    L_filter["filter · 过滤"]:::op_filter
+    L_map["map · 转换"]:::op_map
+    L_flatmap["flatMap · 展开"]:::op_flatmap
+    L_async["async · 异步"]:::op_async
+    L_process["process · 处理"]:::op_process
+    L_sink["sink · 输出"]:::op_sink
+    L_union["union · 合流"]:::op_union
+    L_keyby["keyBy · 分区"]:::op_keyby
+    L_custom["内部逻辑分支"]:::op_custom
+    L_source ~~~ L_filter ~~~ L_map ~~~ L_flatmap ~~~ L_async ~~~ L_process ~~~ L_sink ~~~ L_union ~~~ L_keyby ~~~ L_custom
+  end
+  subgraph P_push["情报推送 · 有效数据流与内部路由（含可配置路径）"]
+    direction TB
+    N_push_f_src_ai_log["FlinkKafkaConsumer<br/>AI 操作日志 Kafka 接入<br/>source · Kafka-Aigun-AI-Operation-Log-Source"]
+    N_push_f_ai_log_db_sink["AiOperationLogKafkaSink<br/>AI 过滤与账号候选日志写入 PG<br/>sink · Aigun-AI-Operation-Log-DB-Sink"]
+    N_push_f_src_analyzed["FlinkKafkaConsumer<br/>原文 Kafka 信封接入（保留位点）<br/>source · Kafka-Original-Source"]
+    N_push_f_route_special["SpecialIngressRouter<br/>Special 侧输出，普通原文主输出<br/>process · Route-Special-From-Original"]
+    N_push_f_parse_original["OriginalStreamVersionParser<br/>原文解析与版本标记，V2+ 标记剔除<br/>map · Parse-Original-JSON"]
+    N_push_f_filter_parse_error["TopologyMapFilter<br/>剔除 _parse_error（含原文 V2+）<br/>filter · Filter-Original-Parse-Errors"]
+    N_push_f_src_golden["FlinkKafkaConsumer<br/>金狗雷达信号接入<br/>source · Kafka-Golden-Radar-Source"]
+    N_push_f_adapt_golden["GoldenRadarEnvelopeAdapter<br/>金狗信封转 goldog/debot 契约<br/>flatMap · Adapt-Golden-Radar-Envelope"]
+    N_push_f_union_original["DataStream.union<br/>原文与雷达信号合流<br/>union · union original"]
+    N_push_f_early_detect["BlockbeatsNewsPredicate<br/>blockbeats 快讯识别<br/>filter · Filter-Early-Blockbeats-Newsflash"]
+    N_push_f_early_enrich["BlockbeatsNewsflashEnricher<br/>快讯字段补全<br/>map · Enrich-Early-Blockbeats-Newsflash"]
+    N_push_f_early_importance["NewsflashImportanceEnricher<br/>调用 AI 接口补 category / importance<br/>map · Enrich-Early-Newsflash-Importance"]
+    N_push_f_early_target["CollectRadarUserIdsEnricher<br/>按代币补充雷达订阅用户<br/>async · Enrich-Early-Newsflash-CollectRadarUsers"]
+    N_push_f_early_idem["IdempotenceFilterFunction<br/>快讯幂等去重<br/>filter · Idempotence-Filter-Early-NewsflashQueue"]
+    N_push_f_early_map_queue["NewsflashOutputMapper<br/>快讯专属队列报文<br/>map · Map-Early-Newsflash-Output"]
+    N_push_f_early_sink_queue["RabbitMqPublishStringFunction<br/>快讯专属队列发布<br/>map · Sink-Early-Newsflash-Dedicated-RabbitMQ"]
+    N_push_f_early_map_aliyun["NewsflashOutputMapper<br/>阿里云快讯 JSON（移除订阅用户）<br/>map · Map-Early-Newsflash-Aliyun-Output"]
+    N_push_f_early_sink_aliyun["RabbitMqPublishStringFunction<br/>阿里云快讯发布<br/>map · Sink-Early-Newsflash-Aliyun-RabbitMQ"]
+    N_push_f_non_blockbeats["InversePredicate<br/>非 blockbeats 原文<br/>filter · Filter-NonBlockbeats-Original"]
+    N_push_f_claw3_detect["Claw3HumanNewsGossipPredicate<br/>claw3 人工新闻/趣闻，排除禁存记录<br/>filter · Filter-Claw3-Human-NewsGossip"]
+    N_push_f_claw3_candidate["MarkContentManagementCandidateFunction<br/>内容管理入库候选标记<br/>map · Mark-Claw3HumanNewsGossip-ContentManagement-Candidate"]
+    N_push_f_claw3_news_type["TopologyMapFilter<br/>新闻类型筛选<br/>filter · Filter-Claw3HumanNews-TypeNews"]
+    N_push_f_claw3_news_enrich["Claw3HumanNewsGossipNewsflashEnricher<br/>新闻快讯补全<br/>map · Enrich-Claw3HumanNews-Newsflash"]
+    N_push_f_claw3_news_valid["TopologyMapFilter<br/>快讯有效性校验<br/>filter · Filter-Claw3HumanNews-Newsflash-Valid"]
+    N_push_f_claw3_news_target["CollectRadarUserIdsEnricher<br/>按代币补充雷达订阅用户<br/>async · Enrich-Claw3HumanNews-CollectRadarUsers"]
+    N_push_f_claw3_news_istest["IsTestPredicate<br/>按报文 is_test 筛选测试分支<br/>filter · Filter-Claw3HumanNews-Newsflash-IsTest"]
+    N_push_f_claw3_news_idem_queue["IdempotenceFilterFunction<br/>专属队列幂等去重<br/>filter · Idempotence-Filter-Claw3HumanNews-NewsflashQueue"]
+    N_push_f_claw3_news_sink_queue["RabbitMqPublishMapFunction<br/>专属快讯队列发布<br/>flatMap · Sink-Claw3HumanNews-Newsflash-Dedicated-RabbitMQ"]
+    N_push_f_claw3_news_nottest["InversePredicate<br/>按报文 is_test 筛选正式分支<br/>filter · Filter-Claw3HumanNews-Newsflash-NotTest"]
+    N_push_f_claw3_news_idem_aliyun["IdempotenceFilterFunction<br/>阿里云幂等去重<br/>filter · Idempotence-Filter-Claw3HumanNews-NewsflashAliyun"]
+    N_push_f_claw3_news_sink_aliyun["RabbitMqPublishMapFunction<br/>阿里云快讯发布<br/>flatMap · Sink-Claw3HumanNews-Newsflash-Aliyun-RabbitMQ"]
+    N_push_f_claw3_gossip_type["TopologyMapFilter<br/>趣闻类型筛选<br/>filter · Filter-Claw3HumanGossip-TypeGossip"]
+    N_push_f_claw3_gossip_enrich["Claw3HumanNewsGossipNewsflashEnricher<br/>趣闻内容补全<br/>map · Enrich-Claw3HumanGossip-Tidbits"]
+    N_push_f_claw3_gossip_valid["TopologyMapFilter<br/>趣闻有效性校验<br/>filter · Filter-Claw3HumanGossip-Tidbits-Valid"]
+    N_push_f_claw3_gossip_target["CollectRadarUserIdsEnricher<br/>按代币补充雷达订阅用户<br/>async · Enrich-Claw3HumanGossip-CollectRadarUsers"]
+    N_push_f_claw3_gossip_istest["IsTestPredicate<br/>按报文 is_test 筛选测试分支<br/>filter · Filter-Claw3HumanGossip-Tidbits-IsTest"]
+    N_push_f_claw3_gossip_idem_queue["IdempotenceFilterFunction<br/>趣闻专属队列幂等去重<br/>filter · Idempotence-Filter-Claw3HumanGossip-TidbitsQueue"]
+    N_push_f_claw3_gossip_sink_queue["RabbitMqPublishMapFunction<br/>趣闻专属队列发布<br/>flatMap · Sink-Claw3HumanGossip-Tidbits-Dedicated-RabbitMQ"]
+    N_push_f_claw3_gossip_nottest["InversePredicate<br/>按报文 is_test 筛选正式分支<br/>filter · Filter-Claw3HumanGossip-Tidbits-NotTest"]
+    N_push_f_claw3_gossip_idem_aliyun["IdempotenceFilterFunction<br/>阿里云趣闻幂等去重<br/>filter · Idempotence-Filter-Claw3HumanGossip-TidbitsAliyun"]
+    N_push_f_claw3_gossip_sink_aliyun["RabbitMqPublishMapFunction<br/>阿里云趣闻发布<br/>flatMap · Sink-Claw3HumanGossip-Tidbits-Aliyun-RabbitMQ"]
+    N_push_f_claw3_union["DataStream.union<br/>内容管理候选与四路发布结果合流<br/>union · claw3 union"]
+    N_push_f_claw3_keyby["TopologyKeySelector<br/>按业务事件 ID + 修订分区<br/>keyBy · claw3 keyby"]
+    N_push_f_claw3_dedup["PostMqPersistenceDedupFunction<br/>内容管理按事件去重，新事件立即输出<br/>process · Deduplicate-Claw3-Post-MQ-ContentManagement"]
+    N_push_f_claw3_store["ContentManagementJdbcSink<br/>内容管理库落库<br/>sink · Sink-Claw3HumanNewsGossip-ContentManagement-DB"]
+    N_push_f_filter_non_claw3["InversePredicate<br/>排除 claw3 人工新闻/趣闻（含禁存）<br/>filter · Filter-NonClaw3HumanNewsGossip-Original"]
+    N_push_f_human_filter["TopologyMapFilter<br/>人工情报原文筛选<br/>filter · Filter-Human-Intelligence"]
+    N_push_f_human_mark["HumanIntelligenceOriginalMapper<br/>标记人工原文类型与 enable_save<br/>map · Human-Intelligence-Original"]
+    N_push_f_non_human["TopologyMapFilter<br/>非人工情报原文分流<br/>filter · Non-Human-Original"]
+    N_push_f_radar_filter["TopologyMapFilter<br/>雷达、金狗与钱包直通信号筛选<br/>filter · Filter-RadarSignal"]
+    N_push_f_radar_direct["RadarSignalDirectMapper<br/>雷达转换与钱包直通<br/>map · RadarSignal-Direct-Process"]
+    N_push_f_radar_market["GoldenRadarTokenUpdateAsyncFunction<br/>金狗首投行情补全<br/>async · Golden-Radar-Token-Update-Async"]
+    N_push_f_cache_gate["FilterFunction（lambda）<br/>待 AI 原文筛选，排除直通信号<br/>filter · Filter-Non-Radar-Signal-Is_Ai"]
+    N_push_f_cache_async["OriginalIntelligenceCacheFunction<br/>异步写原文缓存与标记，零输出<br/>async · Async-Cache-Original-Data"]
+    N_push_f_no_ai["FilterFunction（lambda）<br/>is_ai_analyzed=false 的非直通原文<br/>filter · Filter-Non-Radar-Signal"]
+    N_push_f_src_ai_result["FlinkKafkaConsumer<br/>AI DAG 结果接入<br/>source · Kafka-AI-DAG-Result-Source"]
+    N_push_f_ai_status_events["AiAnalysisStatusEventMapper<br/>AI 分析状态事件提取<br/>flatMap · Map-Raw-Ai-Analysis-Status-Events"]
+    N_push_f_ai_ingress["AiDagResultIngressProcessFunction<br/>AI 结果校验与投递标记，毒消息侧输出<br/>process · Tag-AI-Analysis-Ingest"]
+    N_push_f_ai_quarantine["FlinkKafkaProducer<br/>AI 结果隔离侧流写 Kafka（AT_LEAST_ONCE）<br/>sink · Kafka-AI-DAG-Quarantine-Sink"]
+    N_push_f_ai_db_parse["OriginalJsonParser<br/>分析结果落库解析<br/>map · Parse-AI-Analysis-For-DB"]
+    N_push_f_ai_db_filter["TopologyMapFilter<br/>剔除 _skip，保留可落库分析结果<br/>filter · Filter-Valid-AI-Analysis"]
+    N_push_f_ai_db_sink["AiAnalysisResultBatchSink<br/>独立提交分析结果、步骤与准入回执<br/>sink · AI-Analysis-Result-DB-Sink"]
+    N_push_f_analyzed_parse["AnalyzedEventJsonParser<br/>分析结果解析<br/>map · Parse-Analyzed-JSON"]
+    N_push_f_analyzed_parse_filter["TopologyMapFilter<br/>解析错误过滤<br/>filter · Filter-No-Error-Parse-Analyzed-JSON"]
+    N_push_f_ai_admission["AiAnalysisMainFlowAdmissionFunction<br/>按持久化事实/投递回执校验主流准入<br/>async · AI-Analysis-Main-Flow-Admission"]
+    N_push_f_ai_version["TopologyMapFilter<br/>仅保留 _version=1 的分析结果<br/>filter · Analyzed-Stream-Version-Filter"]
+    N_push_f_keyby["TopologyKeySelector<br/>分析优先 intelligence_id，原文优先 id<br/>keyBy · keyby"]
+    N_push_f_state["AnalyzedStateMachine_v2<br/>V1 分析与原文合并，免 AI 原文直通<br/>process · Intelligence-Analyzed State Machine"]
+    N_push_f_state_noai["状态机内部 · 无 AI 旁路<br/>免 AI 原文填充默认 noise 并输出<br/>custom · state noai"]
+    N_push_f_state_v1["状态机内部 · V1 分析合并<br/>版本一分析与原文合并<br/>custom · state v1"]
+    N_push_f_state_cache["状态机内部 · Redis 补查<br/>查原文缓存，只有 pushed 标记时补空原文<br/>custom · state cache"]
+    N_push_f_state_retry["状态机内部 · 等待原文<br/>每 2 秒重查 Redis 原文，最多等 2 分钟<br/>custom · state retry"]
+    N_push_f_state_db["状态机内部 · 数据库兜底<br/>情报已存在则补空原文合并分析<br/>custom · state db"]
+    N_push_f_state_orphan["状态机内部 · 孤儿丢弃<br/>等待超时且数据库无情报则丢弃分析<br/>custom · state orphan"]
+    N_push_f_src_human["FlinkKafkaConsumer<br/>人工分析结果 Kafka 输入<br/>source · Kafka-Human-Analyzed-Source"]
+    N_push_f_human_parse["HumanAnalyzedJsonParser<br/>人工分析解析<br/>flatMap · Parse-Human-Analyzed-JSON"]
+    N_push_f_human_merge["HumanAnalyzedMergeFunction<br/>有序合并 Redis 原文，缺失时补默认原文<br/>async · Human-Analyzed-Merge"]
+    N_push_f_human_status["HumanAnalysisStatusEventMapper<br/>人工状态事件<br/>flatMap · Map-Human-Ai-Analysis-Status-Events"]
+    N_push_f_special_prepare["SpecialPreparationAsyncFunction<br/>Special 校验、查链、板块配置与原子准入<br/>async · Special-Prepare-Async"]
+    N_push_f_special_ingress_result["SpecialIngressResultProcessFunction<br/>错误信封侧输出，准入事件主输出<br/>process · Special-Ingress-Result"]
+    N_push_f_special_error_sink["FlinkKafkaProducer<br/>Special 错误侧流写 Kafka（AT_LEAST_ONCE）<br/>sink · Kafka-Special-Error-Sink"]
+    N_push_f_special_market["SpecialMarketAsyncFunction<br/>有序补充 Special 代币行情<br/>async · Special-Market-Async"]
+    N_push_f_merged_stream["DataStream.union<br/>雷达、状态机、人工与 Special 合流<br/>union · merged stream"]
+    N_push_f_status_filter["TopologyMapFilter<br/>非 AI 来源状态事件筛选<br/>filter · Filter-Non-Ai-Status-Events"]
+    N_push_f_status_map["AiStatusNotificationMapper<br/>状态通知输出<br/>map · Map-AiStatus-Output-NoDedup"]
+    N_push_f_status_sink["RabbitMqPublishStringFunction<br/>状态通知 RabbitMQ<br/>map · Sink-AiStatus-RabbitMQ-NoDedup"]
+    N_push_f_status_delay_sink["RabbitMqPublishStringFunction<br/>状态延迟通知 RabbitMQ<br/>map · Sink-AiStatus-Delay-RabbitMQ-NoDedup"]
+    N_push_f_write_admission["IntelligenceAnalysisWriteAdmissionPredicate<br/>保留显式非 AI 路径，校验 AI 终态<br/>filter · Filter-Intelligence-Analysis-Write-Admission"]
+    N_push_f_normalize["MergedEventSnapshotMapper<br/>在内存中规范化合流 Map 类型<br/>map · Normalize-Merged-Event"]
+    N_push_f_monitor["MergedStreamMonitorMapFunction<br/>合流监控<br/>map · Merged-Stream-Monitor"]
+    N_push_f_content_hash["ContentHashDedupMapFunction<br/>内容哈希去重<br/>map · JSON Parser with Redis Dedup"]
+    N_push_f_error_dup["ErrorDuplicateMapFilter<br/>异常与重复过滤<br/>filter · Error and Duplicate Filter"]
+    N_push_f_ntt_dedup["NewsTelegramTokenDedupFilter<br/>新闻/电报按代币、子类与方向去重<br/>filter · News-Telegram-Token-Dedup"]
+    N_push_f_human_fetched["MergeTypeFilter<br/>仅 _enable_save=false 的人工原文<br/>filter · Filter-Human-Intel-Fetched"]
+    N_push_f_human_fetched_cache["HumanIntelligenceFetchedCacheFunction<br/>写 intelligence:fetched 查询缓存，零输出<br/>async · Human-Intel-Fetched-Cache"]
+    N_push_f_human_save["MergeTypeFilter<br/>剔除未启用保存的人工原文，其余通过<br/>filter · Filter-Human-Intel-Enable-Save"]
+    N_push_f_human_cache_filter["MergeTypeFilter<br/>仅 _enable_save=true 的人工原文<br/>filter · Filter-Human-Intel-For-Cache"]
+    N_push_f_human_cache["HumanIntelligenceCacheFunction<br/>缓存人工原文供 AI 合并，零输出<br/>async · Human-Intel-Cache"]
+    N_push_f_processing["IntelligencePreparationAsyncFunction<br/>发布前冻结业务副本与实体 ID（不写 PG）<br/>async · Intelligence Processing V2"]
+    N_push_f_result_nonempty["NonEmptyMapFilter<br/>空结果过滤<br/>filter · Filter-Non-Empty-Result"]
+    N_push_f_non_noise["PersistenceFallbackFilterFunction<br/>噪音旁路与非噪音分流<br/>process · Filter-Non-Noise-Result"]
+    N_push_f_non_publish["MergeTypeFilter<br/>人工原文等无主发布出口事件入库旁路<br/>filter · Filter-PG-Only-Without-Publication"]
+    N_push_f_delayed_market["DelayedEntityMarketMessageMapper<br/>延迟行情消息（Outbox 关闭时输出）<br/>flatMap · Map-Delayed-Entity-Market-Messages"]
+    N_push_f_delayed_market_sink["DelayedEntityMarketRabbitMqSink<br/>延迟行情 RabbitMQ（Outbox 开启时无输入）<br/>sink · Sink-Delayed-Entity-Market-RabbitMQ"]
+    N_push_f_human_original_filter["TopologyMapFilter<br/>人工原文观测分流<br/>filter · Filter-Human-Intel-Original"]
+    N_push_f_human_original_discard["DiscardingSink<br/>人工原文观测丢弃<br/>sink · Human-Intel-Original-Discard"]
+    N_push_f_db_fallback["MergeTypeFilter<br/>空原文的分析降级事件分流<br/>filter · Filter-DB-Fallback-Stream"]
+    N_push_f_real_analyzed["RealAnalyzedFilter<br/>真实分析或已提交 Token 实体事件筛选<br/>filter · Filter-Real-Analyzed-Stream"]
+    N_push_f_token_increment_filter["TopologyMapFilter<br/>筛选 Token 业务增量，排除控制信封（无 name/uid）<br/>filter · 未命名"]
+    N_push_f_cache_non_noise["IntelligenceNoiseFilter<br/>合并后排除噪音缓存输入<br/>filter · Filter-Non-Noise-Cache-Input"]
+    N_push_f_redis_cache["AsyncRedisCache_v2<br/>分析热数据缓存写入<br/>async · Async Redis Cache V2 - Real Analyzed Only"]
+    N_push_f_disposition["PersistenceFallbackFilterFunction<br/>发布准入围栏，拒绝事件进入 PG-only<br/>process · Filter-DB-Fallback-Analysis-Disposition"]
+    N_push_f_push_time["AsyncIntelligenceAnalysisPushTimeFunction<br/>复制透传准备结果，保留历史 UID<br/>async · Async Analysis Push Time - DB Fallback"]
+    N_push_f_tok_resolved_src["FlinkKafkaConsumer<br/>token 解析成功回包源<br/>source · Kafka-Token-Resolved-Source"]
+    N_push_f_tok_resolved_sm["TokenResolveResultProcessor<br/>解析成功回包校验与业务提交<br/>flatMap · Token-Resolved-State-Machine"]
+    N_push_f_tok_error_src["FlinkKafkaConsumer<br/>token 解析失败回包源<br/>source · Kafka-Token-Resolve-Error-Source"]
+    N_push_f_tok_error_sm["TokenResolveResultProcessor<br/>解析失败回包处理与控制事件输出<br/>flatMap · Token-Resolve-Error-State-Machine"]
+    N_push_f_tok_error_discard["DiscardingSink<br/>失败控制事件丢弃<br/>sink · Token-Resolve-Error-Discard"]
+    N_push_f_tok_publishable["FilterFunction（lambda）<br/>_token_resolve_no_publish 非 true 的回包<br/>filter · Filter-Token-Resolve-Cache-Refresh-Publishable"]
+    N_push_f_tok_cache_publish["RabbitMqPublishCacheRefreshFunction<br/>token 回包缓存刷新分片发布<br/>flatMap · Publish-Token-Resolve-Cache-Refresh"]
+    N_push_f_tok_persist_after_mq["TokenResolvePostMqPersistenceFunction<br/>通知后更新投递元数据，兼容旧 prepared<br/>flatMap · Persist-Token-Resolve-After-MQ"]
+    N_push_f_tok_persist_after_mq_discard["DiscardingSink<br/>投递后持久化结果丢弃<br/>sink · Persist-Token-Resolve-After-MQ-Discard"]
+    N_push_f_legacy_filter["PersistenceFallbackFilterFunction<br/>普通情报继续主发布链（兼容门禁）<br/>process · Filter-Legacy-Branch"]
+    N_push_f_noise_filter["PersistenceFallbackFilterFunction<br/>噪音发布门禁与旁路入库<br/>process · Filter-Noise-Intelligence"]
+    N_push_f_tg_idem["IdempotenceFilterFunction<br/>Telegram 队列幂等过滤<br/>filter · Idempotence-Filter-TelegramQueue"]
+    N_push_f_tg_sink["RabbitMqPublishMapFunction<br/>Telegram 消息组装与投递<br/>flatMap · Sink-Telegram-RabbitMQ"]
+    N_push_f_intel_fresh["PersistenceFallbackFilterFunction<br/>主情报时效门禁与拒发补库<br/>process · Filter-IntelQueue-Freshness"]
+    N_push_f_intel_idem["PersistenceFallbackFilterFunction<br/>主情报幂等门禁与拒发补库<br/>process · Idempotence-Filter-IntelQueue"]
+    N_push_f_intel_sink["RabbitMqPublishMapFunction<br/>情报主题消息组装与投递<br/>flatMap · Sink-IntelQueue-RabbitMQ"]
+    N_push_f_fin_excl["FinanceIntelligenceExclusionFilter<br/>赚钱情报类型排除<br/>filter · Filter-FinanceIntelligence-Exclude"]
+    N_push_f_fin_users["CollectRadarUserIdsEnricher<br/>赚钱情报逐 token 订阅用户定向<br/>async · Enrich-FinanceIntelligence-CollectRadarUsers"]
+    N_push_f_fin_gate["FinanceTokenResolutionBarrier<br/>等待 Token 解析，失败/超时进入 DLQ<br/>process · Gate-FinanceIntelligence-TokenResolution"]
+    N_push_f_fin_dlq["FlinkKafkaProducer<br/>解析失败/超时/契约错误写 Kafka<br/>sink · Sink-FinanceIntelligence-Resolution-DLQ"]
+    N_push_f_fin_sink["RabbitMqPublishMapFunction<br/>赚钱情报测试队列组装与投递<br/>flatMap · Sink-FinanceIntelligence-Test-RabbitMQ"]
+    N_push_f_fin_aliyun_sink["RabbitMqPublishMapFunction<br/>赚钱情报阿里云队列组装与投递<br/>flatMap · Sink-FinanceIntelligence-Aliyun-RabbitMQ"]
+    N_push_f_mark_pg_only["MarkPgOnlyCandidateFunction<br/>标记旁路，噪音生成入库时间<br/>map · Mark-PG-Only-Candidate"]
+    N_push_f_post_mq_filter["PostMqPersistenceEligibilityFilter<br/>仅保留已准备且非纯缓存刷新的业务事件<br/>filter · Filter-Post-MQ-Business-Persistence"]
+    N_push_f_post_mq_dedup_keyby["TopologyKeySelector<br/>按业务事件 ID + 修订分区<br/>keyBy · post mq dedup keyby"]
+    N_push_f_post_mq_dedup["PostMqPersistenceDedupFunction<br/>按事件版本去重，迟到 MQ 仅升级元数据<br/>process · Deduplicate-Post-MQ-Persistence"]
+    N_push_f_post_mq_pg_keyby["TopologyKeySelector<br/>优先 id，回退 intelligence_id 分区<br/>keyBy · post mq pg keyby"]
+    N_push_f_post_mq_pg["IntelligencePersistenceAsyncFunction<br/>冻结副本批量写 PG，兼容时间元数据升级<br/>async · Post-MQ-PostgreSQL-Writer"]
+    N_push_f_translation_filter["IntelligenceTranslationEligibilityFilter<br/>仅 prod，非噪音/来源/原文/七天完成缓存准入<br/>filter · Filter-Intelligence-Translation-Eligibility"]
+    N_push_f_intel_translation["AsyncIntelligenceTextTranslationFunction<br/>无序请求三语译文，失败或超时空输出<br/>async · Intelligence-Text-Translation-Post-Published"]
+    N_push_f_translation_map["IntelligenceTranslationMapper<br/>按语言生成非空译文模型，排除 original<br/>map · Map-Intelligence-Translations"]
+    N_push_f_translation_sink["IntelligenceTranslationSink<br/>独立事务写 intelligence_translation，成功后标记 DB7<br/>sink · Sink-Intelligence-Translation-PostgreSQL"]
+    N_push_f_cache_refresh_filter["TopologyMapFilter<br/>排除 Token 回包，保留普通写库成功事件<br/>filter · Filter-Cache-Refresh-Non-Token-Resolve"]
+    N_push_f_cache_refresh_sink["RabbitMqPublishCacheRefreshFunction<br/>普通写库成功后分片发布缓存刷新<br/>flatMap · Sink-Cache-Refresh-RabbitMQ"]
+    N_push_f_sink_discard["DiscardingSink<br/>刷新发布完成丢弃<br/>sink · Sink-Discard"]
+    N_push_f_delayed_ready_source["RMQSource<br/>Outbox 关闭：消费 RabbitMQ 就绪队列<br/>source · RabbitMQ-Delayed-Entity-Market-Ready-Source"]
+    N_push_f_delayed_update["DelayedEntityMarketUpdateFunction<br/>取样回写 PG/Redis 后输出 Token 刷新<br/>map · Update-Delayed-Entity-Market"]
+    N_push_f_delayed_outbox_source["DelayedMarketOutboxSource<br/>源内回写行情并提交任务，输出 Token 刷新<br/>source · RabbitMQ-Delayed-Entity-Market-Ready-Source"]
+    N_push_f_delayed_refresh_filter["NonEmptyMapFilter<br/>过滤非 Token 或降级空结果<br/>filter · Filter-Delayed-Market-Cache-Refresh-Non-Empty"]
+    N_push_f_delayed_refresh_sink["RabbitMqPublishCacheRefreshFunction<br/>延迟行情成功后追加缓存刷新<br/>flatMap · Sink-Delayed-Market-Cache-Refresh-RabbitMQ"]
+    N_push_f_delayed_discard["DiscardingSink<br/>延迟刷新终端（两种模式共用 name/uid）<br/>sink · Delayed-Entity-Market-Update-Discard"]
+  end
+  L_push ~~~ P_push
+  N_push_f_src_ai_log --> N_push_f_ai_log_db_sink
+  N_push_f_src_analyzed --> N_push_f_route_special
+  N_push_f_route_special --> N_push_f_parse_original
+  N_push_f_parse_original --> N_push_f_filter_parse_error
+  N_push_f_src_golden --> N_push_f_adapt_golden
+  N_push_f_filter_parse_error --> N_push_f_union_original
+  N_push_f_adapt_golden --> N_push_f_union_original
+  N_push_f_union_original --> N_push_f_early_detect
+  N_push_f_early_detect --> N_push_f_early_enrich
+  N_push_f_early_enrich --> N_push_f_early_importance
+  N_push_f_early_importance --> N_push_f_early_target
+  N_push_f_early_target --> N_push_f_early_idem
+  N_push_f_early_idem --> N_push_f_early_map_queue
+  N_push_f_early_map_queue --> N_push_f_early_sink_queue
+  N_push_f_early_idem --> N_push_f_early_map_aliyun
+  N_push_f_early_map_aliyun --> N_push_f_early_sink_aliyun
+  N_push_f_claw3_news_type --> N_push_f_claw3_news_enrich
+  N_push_f_claw3_news_enrich --> N_push_f_claw3_news_valid
+  N_push_f_claw3_news_valid --> N_push_f_claw3_news_target
+  N_push_f_claw3_news_target --> N_push_f_claw3_news_istest
+  N_push_f_claw3_news_istest --> N_push_f_claw3_news_idem_queue
+  N_push_f_claw3_news_idem_queue --> N_push_f_claw3_news_sink_queue
+  N_push_f_claw3_news_target -.-> N_push_f_claw3_news_nottest
+  N_push_f_claw3_news_nottest --> N_push_f_claw3_news_idem_aliyun
+  N_push_f_claw3_news_idem_aliyun --> N_push_f_claw3_news_sink_aliyun
+  N_push_f_claw3_gossip_type --> N_push_f_claw3_gossip_enrich
+  N_push_f_claw3_gossip_enrich --> N_push_f_claw3_gossip_valid
+  N_push_f_claw3_gossip_valid --> N_push_f_claw3_gossip_target
+  N_push_f_claw3_gossip_target --> N_push_f_claw3_gossip_istest
+  N_push_f_claw3_gossip_istest --> N_push_f_claw3_gossip_idem_queue
+  N_push_f_claw3_gossip_idem_queue --> N_push_f_claw3_gossip_sink_queue
+  N_push_f_claw3_gossip_target -.-> N_push_f_claw3_gossip_nottest
+  N_push_f_claw3_gossip_nottest --> N_push_f_claw3_gossip_idem_aliyun
+  N_push_f_claw3_gossip_idem_aliyun --> N_push_f_claw3_gossip_sink_aliyun
+  N_push_f_union_original -.-> N_push_f_non_blockbeats
+  N_push_f_non_blockbeats --> N_push_f_claw3_detect
+  N_push_f_claw3_detect --> N_push_f_claw3_candidate
+  N_push_f_claw3_candidate --> N_push_f_claw3_news_type
+  N_push_f_claw3_candidate --> N_push_f_claw3_gossip_type
+  N_push_f_claw3_candidate --> N_push_f_claw3_union
+  N_push_f_claw3_news_sink_queue --> N_push_f_claw3_union
+  N_push_f_claw3_news_sink_aliyun --> N_push_f_claw3_union
+  N_push_f_claw3_gossip_sink_queue --> N_push_f_claw3_union
+  N_push_f_claw3_gossip_sink_aliyun --> N_push_f_claw3_union
+  N_push_f_claw3_union --> N_push_f_claw3_keyby
+  N_push_f_claw3_keyby --> N_push_f_claw3_dedup
+  N_push_f_claw3_dedup --> N_push_f_claw3_store
+  N_push_f_non_blockbeats -.-> N_push_f_filter_non_claw3
+  N_push_f_filter_non_claw3 -->|"if enableHumanIntelligence"| N_push_f_human_filter
+  N_push_f_human_filter --> N_push_f_human_mark
+  N_push_f_filter_non_claw3 -. "if enableHumanIntelligence" .-> N_push_f_non_human
+  N_push_f_filter_non_claw3 -. "if !enableHumanIntelligence" .-> N_push_f_radar_filter
+  N_push_f_filter_non_claw3 -. "if !enableHumanIntelligence" .-> N_push_f_cache_gate
+  N_push_f_filter_non_claw3 -. "if !enableHumanIntelligence" .-> N_push_f_no_ai
+  N_push_f_non_human --> N_push_f_radar_filter
+  N_push_f_non_human -.-> N_push_f_cache_gate
+  N_push_f_non_human -.-> N_push_f_no_ai
+  N_push_f_radar_filter --> N_push_f_radar_direct
+  N_push_f_radar_direct --> N_push_f_radar_market
+  N_push_f_cache_gate --> N_push_f_cache_async
+  N_push_f_src_ai_result --> N_push_f_ai_status_events
+  N_push_f_src_ai_result --> N_push_f_ai_ingress
+  N_push_f_ai_ingress -.-> N_push_f_ai_quarantine
+  N_push_f_src_human -->|"if enableHumanIntelligence"| N_push_f_human_parse
+  N_push_f_src_human -. "if enableHumanIntelligence" .-> N_push_f_human_status
+  N_push_f_human_parse --> N_push_f_human_merge
+  N_push_f_human_merge --> N_push_f_merged_stream
+  N_push_f_human_mark --> N_push_f_merged_stream
+  N_push_f_no_ai --> N_push_f_keyby
+  N_push_f_radar_market --> N_push_f_merged_stream
+  N_push_f_ai_ingress --> N_push_f_ai_db_parse
+  N_push_f_ai_db_parse --> N_push_f_ai_db_filter
+  N_push_f_ai_db_filter --> N_push_f_ai_db_sink
+  N_push_f_ai_ingress --> N_push_f_analyzed_parse
+  N_push_f_analyzed_parse --> N_push_f_analyzed_parse_filter
+  N_push_f_analyzed_parse_filter --> N_push_f_ai_admission
+  N_push_f_ai_admission --> N_push_f_ai_version
+  N_push_f_ai_version --> N_push_f_keyby
+  N_push_f_keyby --> N_push_f_state
+  N_push_f_state --> N_push_f_state_noai
+  N_push_f_state_noai --> N_push_f_merged_stream
+  N_push_f_state --> N_push_f_state_v1
+  N_push_f_state_v1 --> N_push_f_merged_stream
+  N_push_f_state_v1 --> N_push_f_state_cache
+  N_push_f_state_cache --> N_push_f_merged_stream
+  N_push_f_state_cache -.-> N_push_f_state_retry
+  N_push_f_state_retry --> N_push_f_merged_stream
+  N_push_f_state_retry -.-> N_push_f_state_db
+  N_push_f_state_db --> N_push_f_merged_stream
+  N_push_f_state_db -.-> N_push_f_state_orphan
+  N_push_f_route_special -.-> N_push_f_special_prepare
+  N_push_f_special_prepare --> N_push_f_special_ingress_result
+  N_push_f_special_ingress_result -.-> N_push_f_special_error_sink
+  N_push_f_special_ingress_result --> N_push_f_special_market
+  N_push_f_special_market --> N_push_f_merged_stream
+  N_push_f_merged_stream --> N_push_f_status_filter
+  N_push_f_merged_stream --> N_push_f_write_admission
+  N_push_f_status_filter --> N_push_f_status_map
+  N_push_f_ai_status_events --> N_push_f_status_map
+  N_push_f_human_status --> N_push_f_status_map
+  N_push_f_status_map --> N_push_f_status_sink
+  N_push_f_status_map --> N_push_f_status_delay_sink
+  N_push_f_write_admission --> N_push_f_normalize
+  N_push_f_normalize --> N_push_f_monitor
+  N_push_f_monitor --> N_push_f_content_hash
+  N_push_f_content_hash --> N_push_f_error_dup
+  N_push_f_error_dup --> N_push_f_ntt_dedup
+  N_push_f_ntt_dedup -->|"if enableHumanIntelligence"| N_push_f_human_fetched
+  N_push_f_ntt_dedup --> N_push_f_human_save
+  N_push_f_human_fetched --> N_push_f_human_fetched_cache
+  N_push_f_human_save -->|"if enableHumanIntelligence"| N_push_f_human_cache_filter
+  N_push_f_human_cache_filter --> N_push_f_human_cache
+  N_push_f_human_save --> N_push_f_processing
+  N_push_f_processing --> N_push_f_result_nonempty
+  N_push_f_result_nonempty --> N_push_f_delayed_market
+  N_push_f_delayed_market -->|"仅 Outbox 关闭时输出"| N_push_f_delayed_market_sink
+  N_push_f_result_nonempty -->|"if enableHumanIntelligence"| N_push_f_human_original_filter
+  N_push_f_human_original_filter -.-> N_push_f_human_original_discard
+  N_push_f_result_nonempty --> N_push_f_non_noise
+  N_push_f_non_noise --> N_push_f_db_fallback
+  N_push_f_non_noise --> N_push_f_real_analyzed
+  N_push_f_non_noise --> N_push_f_non_publish
+  N_push_f_tok_resolved_src -->|"if SETTINGS.isTokenResolveExternalEnabled()"| N_push_f_tok_resolved_sm
+  N_push_f_tok_error_src -->|"if SETTINGS.isTokenResolveExternalEnabled()"| N_push_f_tok_error_sm
+  N_push_f_tok_error_sm -.-> N_push_f_tok_error_discard
+  N_push_f_tok_error_sm -. "if tokenResolveErrorControlStream != null" .-> N_push_f_fin_gate
+  N_push_f_tok_resolved_sm -->|"if tokenResolvedIncrementStream != null"| N_push_f_tok_publishable
+  N_push_f_tok_resolved_sm -. "if tokenResolvedIncrementStream != null" .-> N_push_f_token_increment_filter
+  N_push_f_token_increment_filter --> N_push_f_cache_non_noise
+  N_push_f_tok_resolved_sm -. "if tokenResolvedIncrementStream != null" .-> N_push_f_fin_gate
+  N_push_f_tok_publishable --> N_push_f_tok_cache_publish
+  N_push_f_tok_cache_publish --> N_push_f_tok_persist_after_mq
+  N_push_f_tok_persist_after_mq --> N_push_f_tok_persist_after_mq_discard
+  N_push_f_real_analyzed --> N_push_f_cache_non_noise
+  N_push_f_cache_non_noise --> N_push_f_redis_cache
+  N_push_f_redis_cache --> N_push_f_disposition
+  N_push_f_db_fallback --> N_push_f_disposition
+  N_push_f_disposition --> N_push_f_push_time
+  N_push_f_push_time --> N_push_f_legacy_filter
+  N_push_f_legacy_filter --> N_push_f_noise_filter
+  N_push_f_noise_filter --> N_push_f_tg_idem
+  N_push_f_noise_filter --> N_push_f_intel_fresh
+  N_push_f_noise_filter --> N_push_f_fin_excl
+  N_push_f_tg_idem --> N_push_f_tg_sink
+  N_push_f_intel_fresh --> N_push_f_intel_idem
+  N_push_f_intel_idem --> N_push_f_intel_sink
+  N_push_f_fin_excl --> N_push_f_fin_users
+  N_push_f_fin_users --> N_push_f_fin_gate
+  N_push_f_fin_gate -.-> N_push_f_fin_dlq
+  N_push_f_fin_gate --> N_push_f_fin_sink
+  N_push_f_fin_gate --> N_push_f_fin_aliyun_sink
+  N_push_f_non_noise -. "噪音（含免 AI 普通原文）" .-> N_push_f_mark_pg_only
+  N_push_f_non_publish --> N_push_f_mark_pg_only
+  N_push_f_disposition -. 拒发 .-> N_push_f_mark_pg_only
+  N_push_f_noise_filter -. 噪音 .-> N_push_f_mark_pg_only
+  N_push_f_intel_fresh -. 拒发 .-> N_push_f_mark_pg_only
+  N_push_f_intel_idem -. 拒发 .-> N_push_f_mark_pg_only
+  N_push_f_mark_pg_only --> N_push_f_post_mq_filter
+  N_push_f_intel_sink -.-> N_push_f_post_mq_filter
+  N_push_f_post_mq_filter --> N_push_f_post_mq_dedup_keyby
+  N_push_f_post_mq_dedup_keyby --> N_push_f_post_mq_dedup
+  N_push_f_post_mq_dedup --> N_push_f_post_mq_pg_keyby
+  N_push_f_post_mq_pg_keyby --> N_push_f_post_mq_pg
+  N_push_f_post_mq_pg -->|仅 prod| N_push_f_translation_filter
+  N_push_f_translation_filter --> N_push_f_intel_translation
+  N_push_f_intel_translation --> N_push_f_translation_map
+  N_push_f_translation_map --> N_push_f_translation_sink
+  N_push_f_post_mq_pg --> N_push_f_cache_refresh_filter
+  N_push_f_cache_refresh_filter --> N_push_f_cache_refresh_sink
+  N_push_f_cache_refresh_sink --> N_push_f_sink_discard
+  N_push_f_delayed_ready_source -->|"if !SETTINGS.isDelayedMarketOutboxEnabled()"| N_push_f_delayed_update
+  N_push_f_delayed_update --> N_push_f_delayed_refresh_filter
+  N_push_f_delayed_outbox_source -->|"if SETTINGS.isDelayedMarketOutboxEnabled()"| N_push_f_delayed_refresh_filter
+  N_push_f_delayed_refresh_filter --> N_push_f_delayed_refresh_sink
+  N_push_f_delayed_refresh_sink --> N_push_f_delayed_discard
+  class N_push_f_src_ai_log op_source;
+  class N_push_f_ai_log_db_sink op_sink;
+  class N_push_f_src_analyzed op_source;
+  class N_push_f_route_special op_process;
+  class N_push_f_parse_original op_map;
+  class N_push_f_filter_parse_error op_filter;
+  class N_push_f_src_golden op_source;
+  class N_push_f_adapt_golden op_flatmap;
+  class N_push_f_union_original op_union;
+  class N_push_f_early_detect op_filter;
+  class N_push_f_early_enrich op_map;
+  class N_push_f_early_importance op_map;
+  class N_push_f_early_target op_async;
+  class N_push_f_early_idem op_filter;
+  class N_push_f_early_map_queue op_map;
+  class N_push_f_early_sink_queue op_map;
+  class N_push_f_early_map_aliyun op_map;
+  class N_push_f_early_sink_aliyun op_map;
+  class N_push_f_non_blockbeats op_filter;
+  class N_push_f_claw3_detect op_filter;
+  class N_push_f_claw3_candidate op_map;
+  class N_push_f_claw3_news_type op_filter;
+  class N_push_f_claw3_news_enrich op_map;
+  class N_push_f_claw3_news_valid op_filter;
+  class N_push_f_claw3_news_target op_async;
+  class N_push_f_claw3_news_istest op_filter;
+  class N_push_f_claw3_news_idem_queue op_filter;
+  class N_push_f_claw3_news_sink_queue op_flatmap;
+  class N_push_f_claw3_news_nottest op_filter;
+  class N_push_f_claw3_news_idem_aliyun op_filter;
+  class N_push_f_claw3_news_sink_aliyun op_flatmap;
+  class N_push_f_claw3_gossip_type op_filter;
+  class N_push_f_claw3_gossip_enrich op_map;
+  class N_push_f_claw3_gossip_valid op_filter;
+  class N_push_f_claw3_gossip_target op_async;
+  class N_push_f_claw3_gossip_istest op_filter;
+  class N_push_f_claw3_gossip_idem_queue op_filter;
+  class N_push_f_claw3_gossip_sink_queue op_flatmap;
+  class N_push_f_claw3_gossip_nottest op_filter;
+  class N_push_f_claw3_gossip_idem_aliyun op_filter;
+  class N_push_f_claw3_gossip_sink_aliyun op_flatmap;
+  class N_push_f_claw3_union op_union;
+  class N_push_f_claw3_keyby op_keyby;
+  class N_push_f_claw3_dedup op_process;
+  class N_push_f_claw3_store op_sink;
+  class N_push_f_filter_non_claw3 op_filter;
+  class N_push_f_human_filter op_filter;
+  class N_push_f_human_mark op_map;
+  class N_push_f_non_human op_filter;
+  class N_push_f_radar_filter op_filter;
+  class N_push_f_radar_direct op_map;
+  class N_push_f_radar_market op_async;
+  class N_push_f_cache_gate op_filter;
+  class N_push_f_cache_async op_async;
+  class N_push_f_no_ai op_filter;
+  class N_push_f_src_ai_result op_source;
+  class N_push_f_ai_status_events op_flatmap;
+  class N_push_f_ai_ingress op_process;
+  class N_push_f_ai_quarantine op_sink;
+  class N_push_f_ai_db_parse op_map;
+  class N_push_f_ai_db_filter op_filter;
+  class N_push_f_ai_db_sink op_sink;
+  class N_push_f_analyzed_parse op_map;
+  class N_push_f_analyzed_parse_filter op_filter;
+  class N_push_f_ai_admission op_async;
+  class N_push_f_ai_version op_filter;
+  class N_push_f_keyby op_keyby;
+  class N_push_f_state op_process;
+  class N_push_f_state_noai op_custom;
+  class N_push_f_state_v1 op_custom;
+  class N_push_f_state_cache op_custom;
+  class N_push_f_state_retry op_custom;
+  class N_push_f_state_db op_custom;
+  class N_push_f_state_orphan op_custom;
+  class N_push_f_src_human op_source;
+  class N_push_f_human_parse op_flatmap;
+  class N_push_f_human_merge op_async;
+  class N_push_f_human_status op_flatmap;
+  class N_push_f_special_prepare op_async;
+  class N_push_f_special_ingress_result op_process;
+  class N_push_f_special_error_sink op_sink;
+  class N_push_f_special_market op_async;
+  class N_push_f_merged_stream op_union;
+  class N_push_f_status_filter op_filter;
+  class N_push_f_status_map op_map;
+  class N_push_f_status_sink op_map;
+  class N_push_f_status_delay_sink op_map;
+  class N_push_f_write_admission op_filter;
+  class N_push_f_normalize op_map;
+  class N_push_f_monitor op_map;
+  class N_push_f_content_hash op_map;
+  class N_push_f_error_dup op_filter;
+  class N_push_f_ntt_dedup op_filter;
+  class N_push_f_human_fetched op_filter;
+  class N_push_f_human_fetched_cache op_async;
+  class N_push_f_human_save op_filter;
+  class N_push_f_human_cache_filter op_filter;
+  class N_push_f_human_cache op_async;
+  class N_push_f_processing op_async;
+  class N_push_f_result_nonempty op_filter;
+  class N_push_f_delayed_market op_flatmap;
+  class N_push_f_delayed_market_sink op_sink;
+  class N_push_f_human_original_filter op_filter;
+  class N_push_f_human_original_discard op_sink;
+  class N_push_f_db_fallback op_filter;
+  class N_push_f_real_analyzed op_filter;
+  class N_push_f_token_increment_filter op_filter;
+  class N_push_f_redis_cache op_async;
+  class N_push_f_disposition op_process;
+  class N_push_f_push_time op_async;
+  class N_push_f_tok_resolved_src op_source;
+  class N_push_f_tok_resolved_sm op_flatmap;
+  class N_push_f_tok_error_src op_source;
+  class N_push_f_tok_error_sm op_flatmap;
+  class N_push_f_tok_error_discard op_sink;
+  class N_push_f_tok_publishable op_filter;
+  class N_push_f_tok_cache_publish op_flatmap;
+  class N_push_f_tok_persist_after_mq op_flatmap;
+  class N_push_f_tok_persist_after_mq_discard op_sink;
+  class N_push_f_legacy_filter op_process;
+  class N_push_f_noise_filter op_process;
+  class N_push_f_non_noise op_process;
+  class N_push_f_non_publish op_filter;
+  class N_push_f_cache_non_noise op_filter;
+  class N_push_f_tg_idem op_filter;
+  class N_push_f_tg_sink op_flatmap;
+  class N_push_f_intel_fresh op_process;
+  class N_push_f_intel_idem op_process;
+  class N_push_f_intel_sink op_flatmap;
+  class N_push_f_fin_excl op_filter;
+  class N_push_f_fin_users op_async;
+  class N_push_f_fin_gate op_process;
+  class N_push_f_fin_dlq op_sink;
+  class N_push_f_fin_sink op_flatmap;
+  class N_push_f_fin_aliyun_sink op_flatmap;
+  class N_push_f_mark_pg_only op_map;
+  class N_push_f_post_mq_filter op_filter;
+  class N_push_f_post_mq_dedup_keyby op_keyby;
+  class N_push_f_post_mq_dedup op_process;
+  class N_push_f_post_mq_pg_keyby op_keyby;
+  class N_push_f_post_mq_pg op_async;
+  class N_push_f_translation_filter op_filter;
+  class N_push_f_intel_translation op_async;
+  class N_push_f_translation_map op_map;
+  class N_push_f_translation_sink op_sink;
+  class N_push_f_cache_refresh_filter op_filter;
+  class N_push_f_cache_refresh_sink op_flatmap;
+  class N_push_f_sink_discard op_sink;
+  class N_push_f_delayed_ready_source op_source;
+  class N_push_f_delayed_update op_map;
+  class N_push_f_delayed_outbox_source op_source;
+  class N_push_f_delayed_refresh_filter op_filter;
+  class N_push_f_delayed_refresh_sink op_flatmap;
+  class N_push_f_delayed_discard op_sink;
+  style P_push fill:#FDFDFC,stroke:#E1E5E5,stroke-width:1px,color:#46515A
+  style L_push fill:#FAFBFA,stroke:#E1E5E5,stroke-width:1px,color:#5F6A73

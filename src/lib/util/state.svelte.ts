@@ -40,11 +40,11 @@ const input = $state<State>(readJSON(CODE_STORE_KEY, { ...defaultState }));
 
 // inputState is shared externally when exporting via URL, History, etc.
 // It is reactive for reads; the read-only type keeps writes inside this
-// module, where update() persists and re-validates every change.
+// module, where update() persists every change and validates changed content.
 export const inputState: Readonly<State> = input;
 
 // Pending file reads must not overwrite a later edit or document replacement.
-let codeRevision = 0;
+let codeRevision = $state(0);
 export const getCodeRevision = (): number => codeRevision;
 
 const validatedStateOf = (state: State, serialized: string): ValidatedState => ({
@@ -63,11 +63,11 @@ let validatedCurrent = $state.raw<ValidatedState>(
 
 let lastDiagramType = '';
 
-const processState = async (state: State) => {
-  const processed = validatedStateOf(state, '');
-  // No changes should be done to fields part of `state`.
+type ContentValidation = Pick<ValidatedState, 'diagramType' | 'error' | 'errorMarkers'>;
+
+const validateContent = async (state: Pick<State, 'code' | 'mermaid'>) => {
+  const processed: ContentValidation = { error: undefined, errorMarkers: [] };
   try {
-    processed.serialized = serializeState(state);
     const { diagramType } = await parse(state.code);
     processed.diagramType = diagramType;
     if (lastDiagramType === 'zenuml' && diagramType !== lastDiagramType) {
@@ -123,8 +123,10 @@ const processState = async (state: State) => {
 // Replaces the old URL-hash store subscription; assigned by initURLSubscription.
 let updateHash: ((serialized: string) => void) | undefined;
 let processingRevision = 0;
+let lastValidation:
+  { code: string; mermaid: string; result: Promise<ContentValidation> } | undefined;
 
-// Persist the current input state and asynchronously re-validate it,
+// Persist the current input state and asynchronously validate its content,
 // publishing the result to `validatedState` (and the URL hash, once
 // initURLSubscription has run). Only called from update(), which suppresses
 // dependency tracking.
@@ -132,8 +134,23 @@ const persistAndProcess = (): void => {
   const revision = ++processingRevision;
   const snapshot = $state.snapshot(input) as State;
   writeJSON(CODE_STORE_KEY, snapshot);
-  void processState(snapshot).then((processed) => {
+  // Viewport updates share validation, including an in-flight parse of the same content.
+  if (lastValidation?.code !== snapshot.code || lastValidation.mermaid !== snapshot.mermaid) {
+    lastValidation = {
+      code: snapshot.code,
+      mermaid: snapshot.mermaid,
+      result: validateContent(snapshot)
+    };
+  }
+  void lastValidation.result.then((validation) => {
     if (revision !== processingRevision) return;
+    const processed = { ...validatedStateOf(snapshot, ''), ...validation };
+    try {
+      processed.serialized = serializeState(snapshot);
+    } catch (error) {
+      processed.error = error as Error;
+      console.error(error);
+    }
     validatedCurrent = processed;
     updateHash?.(processed.serialized);
     syncManagedTheme(processed.diagramType);

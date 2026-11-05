@@ -3,7 +3,12 @@
   import { recordRenderTime, shouldRefreshView } from '$/util/autoSync';
   import { PanZoomState } from '$/util/panZoom';
   import { renderAndPlaceDiagram } from '$/util/renderView';
-  import { inputState, updateCodeStore, validatedState } from '$/util/state.svelte';
+  import {
+    getCodeRevision,
+    inputState,
+    updateCodeStore,
+    validatedState
+  } from '$/util/state.svelte';
 
   import FontAwesome, { mayContainFontAwesome } from '$lib/components/FontAwesome.svelte';
   import uniqueID from 'lodash-es/uniqueId';
@@ -17,6 +22,8 @@
   }: { panZoomState?: PanZoomState; shouldShowGrid?: boolean } = $props();
   let code = '';
   let config = '';
+  let renderedCodeRevision = -1;
+  let renderSeq = 0;
   let container: HTMLDivElement | undefined = $state();
   let rough: boolean;
   let view: HTMLDivElement | undefined = $state();
@@ -43,6 +50,8 @@
   const handleStateChange = async (state: ValidatedState) => {
     // A URL load or rapid theme choice can supersede a queued render before validation finishes.
     if (state.code !== inputState.code || state.mermaid !== inputState.mermaid) return;
+    const revision = getCodeRevision();
+    const seq = renderSeq;
     const startTime = Date.now();
     if (state.error !== undefined) {
       error = true;
@@ -55,6 +64,7 @@
         // Do not render if there is no change in Code/Config/PanZoom
         if (
           code === state.code &&
+          renderedCodeRevision === revision &&
           config === state.mermaid &&
           rough === state.rough &&
           panZoom === state.panZoom
@@ -66,26 +76,30 @@
           return;
         }
 
-        code = state.code;
-        config = state.mermaid;
-        rough = state.rough;
-        panZoom = state.panZoom ?? true;
-
-        if (mayContainFontAwesome(code)) {
+        if (mayContainFontAwesome(state.code)) {
           await waitForFontAwesomeToLoad?.();
         }
+        if (seq !== renderSeq || !container?.isConnected) return;
 
         const scroll = view?.parentElement?.scrollTop;
         const { graphDiv } = await renderAndPlaceDiagram({
-          code,
+          code: state.code,
           config: JSON.parse(state.mermaid) as MermaidConfig,
           container,
           rough: state.rough,
           viewId: uniqueID('graph-')
         });
+        if (seq !== renderSeq || !container?.isConnected) return;
         if (graphDiv && state.panZoom) {
           handlePanZoom(state, graphDiv);
+        } else {
+          panZoomState.destroy();
         }
+        code = state.code;
+        renderedCodeRevision = revision;
+        config = state.mermaid;
+        rough = state.rough;
+        panZoom = state.panZoom ?? true;
         if (view?.parentElement && scroll) {
           view.parentElement.scrollTop = scroll;
         }
@@ -105,6 +119,21 @@
 
   onMount(() => {
     setupPanZoomObserver();
+    return () => {
+      renderSeq++;
+      panZoomState.destroy();
+      panZoomState.onPanZoomChange = undefined;
+    };
+  });
+
+  $effect(() => {
+    // Invalidate immediately, before validation/rendering of replacement content finishes.
+    getCodeRevision();
+    void inputState.mermaid;
+    void inputState.rough;
+    void inputState.panZoom;
+    renderSeq++;
+    panZoomState.cancelPendingChanges();
   });
 
   // Queue state changes to avoid race condition

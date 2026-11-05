@@ -1,9 +1,12 @@
 import type { State } from '$lib/types';
 import { flushSync } from 'svelte';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as mermaidUtil from './mermaid';
+import { deserializeState } from './serde';
 import {
   clearDefaultThemeConfig,
   defaultState,
+  getCodeRevision,
   inputState,
   loadState,
   replaceInputState,
@@ -89,6 +92,20 @@ describe('update functions persist input state', () => {
   });
 });
 
+it('notifies viewport invalidation even for same-code replacement, but not pan updates', () => {
+  const counter = countEffectRuns(() => getCodeRevision());
+  try {
+    updateCodeStore({ pan: { x: 1, y: 2 }, zoom: 2 });
+    flushSync();
+    expect(counter.runs()).toBe(1);
+    replaceInputState({ ...inputState });
+    flushSync();
+    expect(counter.runs()).toBe(2);
+  } finally {
+    counter.stop();
+  }
+});
+
 describe('default config', () => {
   it('ships an empty mermaid config so mermaid picks its own theme, look and layout', () => {
     expect(defaultState.mermaid).toBe('{}');
@@ -111,6 +128,123 @@ const settled = () =>
 const flowchart = 'graph TD\n  A[Managed] --> B[Theme]';
 const pie = 'pie\n  "A": 1\n  "B": 2';
 const slow = { timeout: 15_000 };
+
+describe('viewport updates reuse content validation', () => {
+  beforeEach(async () => {
+    toggleDarkTheme(false, false);
+    replaceInputState({ ...defaultState, code: flowchart, mermaid: '{"theme":"forest"}' });
+    await settled();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    toggleDarkTheme(false);
+  });
+
+  it('keeps the latest viewport in storage and links without parsing again', async () => {
+    const parse = vi.spyOn(mermaidUtil, 'parse');
+    for (let i = 1; i <= 10; i++) {
+      updateCodeStore({ pan: { x: i * 10, y: -i }, zoom: i / 2 });
+    }
+    await vi.waitFor(() => expect(validatedState.current.zoom).toBe(5));
+    expect(parse).not.toHaveBeenCalled();
+    expect(validatedState.current).toMatchObject({
+      diagramType: 'flowchart-v2',
+      pan: { x: 100, y: -10 },
+      zoom: 5
+    });
+    expect(deserializeState(validatedState.current.serialized)).toEqual(readStoredState());
+
+    replaceInputState({ ...defaultState, code: flowchart, mermaid: inputState.mermaid });
+    await vi.waitFor(() => expect(validatedState.current.pan).toBeUndefined());
+    expect(validatedState.current.zoom).toBeUndefined();
+    expect(deserializeState(validatedState.current.serialized)).toEqual(readStoredState());
+    expect(parse).not.toHaveBeenCalled();
+  });
+
+  it('shares pending validation and publishes the latest view state', async () => {
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof mermaidUtil.parse>>>();
+    const parse = vi.spyOn(mermaidUtil, 'parse').mockReturnValue(pending.promise);
+    const code = 'flowchart TD\n Pending --> Validation';
+    updateCode(code);
+    updateCodeStore({ pan: { x: 30, y: 40 }, zoom: 2, editorMode: 'config', grid: false });
+    pending.resolve({ diagramType: 'flowchart-v2', config: {} });
+    await settled();
+    expect(parse).toHaveBeenCalledExactlyOnceWith(code);
+    expect(validatedState.current).toMatchObject({
+      code,
+      editorMode: 'config',
+      grid: false,
+      pan: { x: 30, y: 40 },
+      zoom: 2
+    });
+    expect(deserializeState(validatedState.current.serialized)).toEqual(readStoredState());
+  });
+
+  it('validates again when either code or configuration changes', async () => {
+    const parse = vi.spyOn(mermaidUtil, 'parse');
+    updateCode(pie);
+    await settled();
+    expect(parse).toHaveBeenCalledExactlyOnceWith(pie);
+    expect(validatedState.current.diagramType).toBe('pie');
+    updateConfig('{"theme":"forest","look":"classic"}');
+    await settled();
+    expect(parse).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['syntax', 'flowchart TD\n A -->[', '{"theme":"forest"}'],
+    ['JSON', flowchart, '{ invalid'],
+    ['config shape', flowchart, '[]']
+  ])('preserves %s errors when the viewport changes', async (kind, code, mermaid) => {
+    replaceInputState({ ...defaultState, code, mermaid });
+    await settled();
+    const { error, errorMarkers } = validatedState.current;
+    expect(error).toBeInstanceOf(Error);
+    if (kind === 'syntax') expect(errorMarkers.length).toBeGreaterThan(0);
+    const parse = vi.spyOn(mermaidUtil, 'parse');
+    updateCodeStore({ pan: { x: 50, y: 60 }, zoom: 3 });
+    await vi.waitFor(() => expect(validatedState.current.zoom).toBe(3));
+    expect(parse).not.toHaveBeenCalled();
+    expect(validatedState.current.error).toBe(error);
+    expect(validatedState.current.errorMarkers).toEqual(errorMarkers);
+    expect(deserializeState(validatedState.current.serialized)).toEqual(readStoredState());
+
+    replaceInputState({ ...defaultState, code: flowchart, mermaid: '{"theme":"forest"}' });
+    await settled();
+    expect(parse).toHaveBeenCalledOnce();
+    expect(validatedState.current.error).toBeUndefined();
+    expect(validatedState.current.errorMarkers).toEqual([]);
+  });
+
+  it('ignores obsolete validation without losing the latest content or viewport', async () => {
+    type Result = Awaited<ReturnType<typeof mermaidUtil.parse>>;
+    const older = Promise.withResolvers<Result>();
+    const latest = Promise.withResolvers<Result>();
+    const parse = vi
+      .spyOn(mermaidUtil, 'parse')
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(latest.promise);
+    updateCode('flowchart TD\n Older --> Diagram');
+    updateCode(pie);
+    updateCodeStore({ pan: { x: 20, y: 30 }, zoom: 4 });
+    latest.resolve({ diagramType: 'pie', config: {} });
+    await settled();
+    older.resolve({ diagramType: 'flowchart-v2', config: {} });
+    await older.promise;
+    await Promise.resolve();
+    updateCodeStore({ pan: { x: 40, y: 50 }, zoom: 5 });
+    await vi.waitFor(() => expect(validatedState.current.zoom).toBe(5));
+    expect(parse).toHaveBeenCalledTimes(2);
+    expect(validatedState.current).toMatchObject({
+      code: pie,
+      diagramType: 'pie',
+      pan: { x: 40, y: 50 },
+      zoom: 5
+    });
+    expect(deserializeState(validatedState.current.serialized)).toEqual(readStoredState());
+  });
+});
 
 describe('managed theme', () => {
   it('derives the diagram type default once the code validates', slow, async () => {
