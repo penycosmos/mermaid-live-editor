@@ -25,7 +25,9 @@ test('smooth preview hands its visible viewport to a mouse drag on the fixed can
 }) => {
   await page.goto(`/edit#${serializeState({ ...defaultState, code: generatedDiagram(100) })}`);
   await expect(page.locator('#view .node')).toHaveCount(100, { timeout: 15_000 });
-  await page.getByRole('button', { name: '缩放显示模式', exact: true }).click();
+  await expect(page.getByRole('button', { name: '缩放显示模式', exact: true })).toHaveText(
+    '流畅优先'
+  );
   const container = page.locator('#container');
   const box = await container.boundingBox();
   if (!box) throw new Error('Canvas is missing');
@@ -73,7 +75,7 @@ test('switching rendering modes during zoom preserves the visible viewport', asy
   await page.goto(`/edit#${serializeState({ ...defaultState, code: generatedDiagram(100) })}`);
   await expect(page.locator('#view .node')).toHaveCount(100, { timeout: 15_000 });
   const mode = page.getByRole('button', { name: '缩放显示模式', exact: true });
-  await mode.click();
+  await expect(mode).toHaveText('流畅优先');
   const visible = await mode.evaluate(async (button) => {
     const svg = document.querySelector('#container > svg');
     if (!svg) throw new Error('SVG is missing');
@@ -119,8 +121,8 @@ for (const renderMode of ['crisp', 'smooth']) {
       const nodes = page.locator('#view .node');
       await expect(nodes).toHaveCount(count, { timeout: 15_000 });
       const modeButton = page.getByRole('button', { name: '缩放显示模式', exact: true });
-      await expect(modeButton).toHaveText('清晰优先');
-      if (renderMode === 'smooth') await modeButton.click();
+      await expect(modeButton).toHaveText('流畅优先');
+      if (renderMode === 'crisp') await modeButton.click();
       await page.getByRole('button', { name: '代码编辑', exact: true }).click();
       await page.getByTitle('适应画布', { exact: true }).click();
       await expect.poll(async () => (await storedState(page)).zoom).toBeCloseTo(0.875);
@@ -164,7 +166,7 @@ for (const renderMode of ['crisp', 'smooth']) {
       expect(deserializeState(shared.hash.slice(1))).toEqual(saved);
       await page.reload();
       await expect(nodes).toHaveCount(count, { timeout: 15_000 });
-      await expect(modeButton).toHaveText('清晰优先');
+      await expect(modeButton).toHaveText('流畅优先');
       await expect.poll(async () => (await storedState(page)).zoom).toBeCloseTo(saved.zoom);
       await expect.poll(async () => (await storedState(page)).pan).toEqual(savedPan);
       await expect
@@ -185,7 +187,7 @@ test.describe('high DPI wheel zoom', () => {
   test.use({ viewport: { width: 2304, height: 1296 }, deviceScaleFactor: 2 });
 
   for (const [route, renderMode] of [
-    ['view', 'crisp'],
+    ['view', 'smooth'],
     ['embed', 'crisp'],
     ['edit', 'smooth'],
     ['embed', 'smooth']
@@ -198,7 +200,7 @@ test.describe('high DPI wheel zoom', () => {
       );
       const viewport = page.locator('.svg-pan-zoom_viewport');
       await expect(viewport).toBeVisible({ timeout: 15_000 });
-      if (renderMode === 'smooth')
+      if (renderMode === 'crisp')
         await page.getByRole('button', { name: '缩放显示模式', exact: true }).click();
       await page.evaluate(async () => {
         await new Promise(requestAnimationFrame);
@@ -282,7 +284,7 @@ for (const renderMode of ['crisp', 'smooth']) {
     }, restored);
     await page.goto(`/edit#${serializeState(state)}`);
     await expect(page.locator('.svg-pan-zoom_viewport')).toBeVisible({ timeout: 15_000 });
-    if (renderMode === 'smooth')
+    if (renderMode === 'crisp')
       await page.getByRole('button', { name: '缩放显示模式', exact: true }).click();
     await page.getByRole('button', { name: '本地历史', exact: true }).click();
     const restore = page.getByRole('button', { name: '恢复此版本' }).first();
@@ -317,7 +319,7 @@ for (const renderMode of ['crisp', 'smooth']) {
   }) => {
     await page.goto(`/edit#${serializeState({ ...defaultState, code: generatedDiagram(10) })}`);
     await expect(page.locator('.svg-pan-zoom_viewport')).toBeVisible({ timeout: 15_000 });
-    if (renderMode === 'smooth')
+    if (renderMode === 'crisp')
       await page.getByRole('button', { name: '缩放显示模式', exact: true }).click();
     await page.getByRole('button', { name: '导出', exact: true }).click();
     const download = page.waitForEvent('download');

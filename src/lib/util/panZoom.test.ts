@@ -190,6 +190,10 @@ describe('viewport notifications', () => {
 });
 
 describe('wheel zoom', () => {
+  beforeEach(() => {
+    state.setWheelRenderMode('crisp');
+  });
+
   it.each([8, 16, 100])('accumulates the same zoom with inputs %ims apart', (interval) => {
     for (let i = 0; i < 5; i++) {
       expect(wheel().defaultPrevented).toBe(true);
@@ -299,7 +303,7 @@ describe('smooth wheel rendering', () => {
     const changed = vi.fn();
     const readMatrix = vi.spyOn(svg, 'getScreenCTM');
     state.onPanZoomChange = changed;
-    state.setWheelRenderMode('smooth');
+    expect(state.wheelRenderMode).toBe('smooth');
     wheel();
     frame(20);
     frame(20);

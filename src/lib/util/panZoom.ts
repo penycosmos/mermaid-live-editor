@@ -14,7 +14,7 @@ export class PanZoomState {
   private listeners?: AbortController;
   private pendingChange = false;
   private wheelFrame?: number;
-  private renderMode: WheelRenderMode = 'crisp';
+  private renderMode: WheelRenderMode = 'smooth';
   private preview?: {
     basePan: Point;
     baseZoom: number;
