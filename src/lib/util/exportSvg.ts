@@ -10,13 +10,19 @@ export const prepareExportSvg = async (
   svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   svg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
   svg.style.backgroundColor = getComputedStyle(document.body).getPropertyValue('--background');
+  const sourceStyle = getComputedStyle(source);
+  svg.style.fontFamily = sourceStyle.fontFamily;
+  svg.style.letterSpacing = sourceStyle.letterSpacing;
+
+  for (const foreignObject of svg.querySelectorAll('foreignObject')) {
+    foreignObject.style.overflow = 'visible';
+  }
 
   if (rough) {
     for (const foreignObject of svg.querySelectorAll('foreignObject')) {
       const height = Number(foreignObject.getAttribute('height'));
       if (height <= 0) continue;
       // Centered rough labels extend beyond the measured viewport on both axes.
-      foreignObject.style.overflow = 'visible';
       foreignObject.setAttribute('height', String(height * 1.5));
       foreignObject.setAttribute(
         'y',
