@@ -20,6 +20,54 @@ const generatedDiagram = (count: number) =>
 const storedState = (page: Page): Promise<State> =>
   page.evaluate(() => JSON.parse(localStorage.getItem('codeStore') ?? '{}'));
 
+test('画布工具栏在悬停和聚焦时显示说明', async ({ page }) => {
+  await page.goto('/edit');
+  for (const [role, name, description] of [
+    ['button', '适应画布', '适应画布'],
+    ['button', '缩小', '缩小'],
+    ['button', '放大', '放大'],
+    ['button', '缩放显示模式', '切换为清晰优先：缩放过程中保持矢量清晰度'],
+    ['link', '全屏查看', '全屏查看'],
+    ['button', '手绘风格', '手绘风格'],
+    ['button', '背景网格', '背景网格']
+  ] as const) {
+    await page.getByRole(role, { name, exact: true }).hover();
+    const tooltip = page.getByRole('tooltip', { name: description, exact: true });
+    await expect(tooltip).toBeVisible();
+    await expect(tooltip).toHaveAttribute('data-side', 'top');
+    await expect(page.locator('[role="tooltip"]:not([data-state="closed"])')).toHaveCount(1);
+  }
+
+  await page.mouse.move(0, 0);
+  const fit = page.getByRole('button', { name: '适应画布', exact: true });
+  const tooltip = page.getByRole('tooltip', { name: '适应画布', exact: true });
+  await fit.focus();
+  await expect(tooltip).toHaveText('适应画布');
+  await expect(fit).toHaveAttribute('aria-describedby', (await tooltip.getAttribute('id')) ?? '');
+
+  for (const name of ['手绘风格', '背景网格']) {
+    const button = page.getByRole('button', { name, exact: true });
+    const pressed = await button.getAttribute('aria-pressed');
+    await button.click();
+    await expect(button).toHaveAttribute('aria-pressed', pressed === 'true' ? 'false' : 'true');
+  }
+
+  await page.goto('/embed');
+  await page.getByRole('button', { name: '适应画布', exact: true }).hover();
+  await expect(tooltip).toHaveText('适应画布');
+  await expect(tooltip).toHaveAttribute('data-side', 'bottom');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/edit');
+  await page.getByRole('button', { name: '缩放显示模式', exact: true }).hover();
+  const modeTooltip = page.getByRole('tooltip', { name: /切换为清晰优先/ });
+  await expect(modeTooltip).toBeVisible();
+  const bounds = await modeTooltip.boundingBox();
+  if (!bounds) throw new Error('未找到提示区域');
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+});
+
 test('smooth preview hands its visible viewport to a mouse drag on the fixed canvas', async ({
   page
 }) => {
@@ -104,7 +152,7 @@ test('switching rendering modes during zoom preserves the visible viewport', asy
   expect((await storedState(page)).zoom).toBe(visible.zoom);
   expect((await storedState(page)).pan).toEqual(visible.pan);
   if (visible.zoom === undefined) throw new Error('Visible zoom is missing');
-  await page.getByTitle('放大', { exact: true }).click();
+  await page.getByRole('button', { name: '放大', exact: true }).click();
   await expect.poll(async () => (await storedState(page)).zoom).toBeCloseTo(visible.zoom * 1.1, 6);
 });
 
@@ -124,7 +172,7 @@ for (const renderMode of ['crisp', 'smooth']) {
       await expect(modeButton).toHaveText('流畅优先');
       if (renderMode === 'crisp') await modeButton.click();
       await page.getByRole('button', { name: '代码编辑', exact: true }).click();
-      await page.getByTitle('适应画布', { exact: true }).click();
+      await page.getByRole('button', { name: '适应画布', exact: true }).click();
       await expect.poll(async () => (await storedState(page)).zoom).toBeCloseTo(0.875);
       const originalSvg = await page.locator('#view svg').elementHandle();
       if (!originalSvg) throw new Error('SVG is missing');
@@ -144,9 +192,9 @@ for (const renderMode of ['crisp', 'smooth']) {
         .toBeCloseTo(0.875 * 1.2 ** 1.2, 6);
 
       const wheelZoom = (await storedState(page)).zoom ?? 0;
-      await page.getByTitle('放大', { exact: true }).click();
+      await page.getByRole('button', { name: '放大', exact: true }).click();
       await expect.poll(async () => (await storedState(page)).zoom ?? 0).toBeGreaterThan(wheelZoom);
-      await page.getByTitle('缩小', { exact: true }).click();
+      await page.getByRole('button', { name: '缩小', exact: true }).click();
       await expect.poll(async () => (await storedState(page)).zoom ?? 0).toBeCloseTo(wheelZoom);
       const saved = await storedState(page);
       if (!saved.pan || !saved.zoom) throw new Error('Saved viewport is missing');
@@ -177,7 +225,7 @@ for (const renderMode of ['crisp', 'smooth']) {
           })
         )
         .toEqual(savedPan);
-      await page.getByTitle('适应画布', { exact: true }).click();
+      await page.getByRole('button', { name: '适应画布', exact: true }).click();
       await expect.poll(async () => (await storedState(page)).zoom).toBeCloseTo(0.875);
     });
   }
@@ -336,9 +384,9 @@ for (const renderMode of ['crisp', 'smooth']) {
     expect((await download).suggestedFilename()).toMatch(/\.svg$/);
     await page.keyboard.press('Escape');
     await expect(page.locator('.svg-pan-zoom_viewport')).toBeVisible();
-    await page.getByTitle('适应画布', { exact: true }).click();
+    await page.getByRole('button', { name: '适应画布', exact: true }).click();
     await expect.poll(async () => (await storedState(page)).zoom).toBeCloseTo(0.875, 6);
-    await page.getByTitle('放大', { exact: true }).click();
+    await page.getByRole('button', { name: '放大', exact: true }).click();
     await expect.poll(async () => (await storedState(page)).zoom).toBeCloseTo(0.875 * 1.1, 6);
   });
 }
