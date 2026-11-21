@@ -19,23 +19,12 @@ export const prepareExportSvg = async (
   }
 
   if (rough) {
-    for (const foreignObject of svg.querySelectorAll('foreignObject')) {
-      const height = Number(foreignObject.getAttribute('height'));
-      if (height <= 0) continue;
-      // Centered rough labels extend beyond the measured viewport on both axes.
-      foreignObject.setAttribute('height', String(height * 1.5));
-      foreignObject.setAttribute(
-        'y',
-        String(Number(foreignObject.getAttribute('y') ?? 0) - height / 4)
-      );
-      for (const element of foreignObject.querySelectorAll<HTMLElement>('div, span, p')) {
-        Object.assign(element.style, {
-          alignItems: 'center',
-          display: 'flex',
-          height: '100%',
-          justifyContent: 'center'
-        });
-      }
+    const paragraphs = source.querySelectorAll('foreignObject p');
+    // 手绘 SVG 不携带页面的段落样式，导出时保留实际边距，避免文字移位或被裁掉。
+    for (const [index, paragraph] of svg
+      .querySelectorAll<HTMLElement>('foreignObject p')
+      .entries()) {
+      paragraph.style.margin = getComputedStyle(paragraphs[index]).margin;
     }
   }
 

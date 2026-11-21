@@ -101,6 +101,81 @@ test.describe('Check actions', () => {
   });
 });
 
+test('手绘 PNG 的文字横向位置与画板一致', async ({ page }, testInfo) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto(
+    `/edit#${serializeState({
+      ...defaultState,
+      code: 'flowchart TD\n A["普通消息与人工情报分流<br/>Normal-Output-Filter / HumanIntel-Output-Filter"]\n classDef default fill:#fff,stroke:#ddd,color:#000',
+      rough: true,
+      panZoom: false
+    })}`
+  );
+  await expect(page.locator('#container > svg#graph-div foreignObject')).toBeVisible();
+  await page.evaluate(() => {
+    const drawImage = CanvasRenderingContext2D.prototype.drawImage;
+    CanvasRenderingContext2D.prototype.drawImage = function (image, ...coordinates: number[]) {
+      if (image instanceof HTMLImageElement && image.src.startsWith('data:image/svg+xml')) {
+        const source = document.querySelector<SVGSVGElement>('#container svg');
+        if (!source) throw new Error('画板中没有图表');
+        const svg = source.cloneNode(true) as SVGSVGElement;
+        const style = getComputedStyle(source);
+        svg.style.fontFamily = style.fontFamily;
+        svg.style.letterSpacing = style.letterSpacing;
+        svg.setAttribute('width', String(image.width));
+        svg.setAttribute('height', String(image.height));
+        for (const label of svg.querySelectorAll('foreignObject')) label.style.overflow = 'visible';
+        document.documentElement.dataset.previewSvg = new XMLSerializer().serializeToString(svg);
+      }
+      Reflect.apply(drawImage, this, [image, ...coordinates]);
+    };
+  });
+  await page.getByRole('button', { name: '导出', exact: true }).click();
+  const pending = page.waitForEvent('download');
+  await page.getByTestId(TID.downloadPNG).click();
+  const file = testInfo.outputPath('文字位置.png');
+  await (await pending).saveAs(file);
+  const actual = (await readFile(file)).toString('base64');
+  const positions = await page.evaluate(async (actual) => {
+    const reference = document.documentElement.dataset.previewSvg;
+    if (!reference) throw new Error('没有保存导出时的画板图表');
+    const measure = async (source: string) => {
+      const image = new Image();
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error('无法读取对比图片'));
+        image.src = source;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('无法创建对比画布');
+      context.fillStyle = 'white';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let left = canvas.width;
+      let right = -1;
+      for (let offset = 0; offset < pixels.length; offset += 4) {
+        if (Math.max(...pixels.slice(offset, offset + 3)) < 80) {
+          const x = (offset / 4) % canvas.width;
+          left = Math.min(left, x);
+          right = Math.max(right, x);
+        }
+      }
+      return { left, right };
+    };
+    return {
+      reference: await measure(`data:image/svg+xml,${encodeURIComponent(reference)}`),
+      actual: await measure(`data:image/png;base64,${actual}`)
+    };
+  }, actual);
+  expect(positions.reference.right).toBeGreaterThan(positions.reference.left);
+  expect(positions.actual.left).toBeCloseTo(positions.reference.left, 0);
+  expect(positions.actual.right).toBeCloseTo(positions.reference.right, 0);
+});
+
 for (const [label, format, sizeMode, rough, inheritedFont] of [
   ['ABCDEFGHIJKLMNO', 'PNG', 'Auto', true, false],
   ['ABCDEFGHIJKLMNO', 'PNG', 'Width', true, false],
